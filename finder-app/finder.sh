@@ -1,5 +1,9 @@
 #!/bin/bash
 # Assignment 1
+# Arthor: Kenneth Jones
+# 1/13/22
+
+# Summary
 # - Accepts the following runtime arguments: the first argument is a path to a directory on the filesystem, referred to 
 #   below as filesdir; the second argument is a text string which will be searched within these files, referred to below 
 #   as searchstr
@@ -21,7 +25,7 @@ if [ "$#" -lt 2 ]; then
 fi
 
 # Validate the direcroty argument is not empy and a directory
-if [ ! -d "$1" ]; then
+if [ ! -n "$1" ] || [ ! -d "$1" ]; then
    echo "Error: $1 is not a valid directory"
    exit 1
 fi
