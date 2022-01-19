@@ -41,9 +41,10 @@ else
 	exit 1
 fi
 
-echo "Removing the old writer utility and compiling as a native application"
-make clean
-make
+# Removed make for assignment3 part 1
+# echo "Removing the old writer utility and compiling as a native application"
+# make clean
+# make
 
 for i in $( seq 1 $NUMFILES)
 do
