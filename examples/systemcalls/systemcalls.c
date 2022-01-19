@@ -9,15 +9,31 @@
 */
 bool do_system(const char *cmd)
 {
+   // Create syslog for logging
+   openlog(NULL, 0, LOG_USER);
 
-/*
- * TODO  add your code here
- *  Call the system() function with the command set in the cmd
- *   and return a boolean true if the system() call completed with success 
- *   or false() if it returned a failure
-*/
+   int rtnVal = system(cmd);
 
-    return true;
+   // Reference https://man7.org/linux/man-pages/man3/system.3.html for return values
+   if ((NULL == cmd) && (0 == rtnVal))
+   {
+      syslog(LOG_ERR, "No shell is available");
+      return false;
+   }
+
+   if (-1 == rtnVal)
+   {
+      syslog(LOG_ERR, "Child process could not be created");
+      return false;
+   }
+
+   if (rtnVal > 0)
+   {
+      syslog(LOG_ERR, "Shell could not be executed in the child process");
+      return false;
+   }
+
+   return true;
 }
 
 /**
