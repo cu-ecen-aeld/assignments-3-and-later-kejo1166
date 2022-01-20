@@ -61,21 +61,50 @@ bool do_exec(int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
-
-/*
- * TODO:
- *   Execute a system command by calling fork, execv(),
- *   and wait instead of system (see LSP page 161).
- *   Use the command[0] as the full path to the command to execute
- *   (first argument to execv), and use the remaining arguments
- *   as second argument to the execv() command.
- *   
-*/
 
     va_end(args);
+
+    // Create syslog for logging
+    openlog(NULL, 0, LOG_USER);
+
+    // Create child process
+   int pid;
+   int status;
+   int rtnVal;
+
+   // Create child process
+    pid = fork();
+
+    if (-1 == pid)
+    {
+       syslog(LOG_ERR, "No child process is created");
+       return false;
+    }
+    else if (0 == pid)
+    {
+       // Return in the child process.
+       rtnVal = execv(command[0], command); // Note execv functions return only if an error has occurred
+       syslog(LOG_ERR, "Error running child processes, errno=%d", errno);
+       exit(EXIT_FAILURE); // exit child process 
+    }
+    else
+    {
+       // Returned in the parent process, need to wait for child process to finish
+       rtnVal = waitpid(pid, &status, 0);
+
+       if (-1 == rtnVal)
+       {
+          syslog(LOG_ERR, "Child process failed, errno=%d", errno);
+          return false;
+       }
+
+       // Check if the child process exited normally
+       if (!WIFEXITED(status))
+       {
+          syslog(LOG_ERR, "Child process exit it with issues, exit status=%d ", WEXITSTATUS(status));
+          return false;
+       }
+    }
 
     return true;
 }
