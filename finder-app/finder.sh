@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # Assignment 1
 # Arthor: Kenneth Jones
 # 1/13/22
