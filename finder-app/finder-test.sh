@@ -16,22 +16,19 @@ else
    username=$(cat /etc/finder-app/conf/username.txt)
 fi
 
+WRITER_BIN="writer"
 path=$(which writer)
 if [ -z $path ]; then
    # Path is empty assumer relative locations
-   WRITER_BIN = "./writer"
-else
-   WRITER_BIN = "writer"
+   WRITER_BIN="./writer"   
 fi
 
+FINDER_BIN="finder.sh"
 path=$(which finder.sh)
 if [ -z $path ]; then
    # Path is empty assumer relative locations
-   FINDER_BIN = "./finder.sh"
-else
-   FINDER_BIN = "finder.sh"
+   FINDER_BIN="./finder.sh"
 fi
-
 
 
 if [ $# -lt 2 ]
