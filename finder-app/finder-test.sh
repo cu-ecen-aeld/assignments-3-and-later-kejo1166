@@ -8,7 +8,28 @@ set -u
 NUMFILES=10
 WRITESTR=AELD_IS_FUN
 WRITEDIR=/tmp/aeld-data
-username=$(cat conf/username.txt)
+
+# buildroot store file in different location, so do some checks to find the files and binaries
+if [ -e ./conf/username.txt ]; then
+   username=$(cat conf/username.txt)
+else
+   username=$(cat /etc/finder-app/conf/username.txt)
+fi
+
+WRITER_BIN="writer"
+path=$(which writer)
+if [ -z $path ]; then
+   # Path is empty assumer relative locations
+   WRITER_BIN="./writer"   
+fi
+
+FINDER_BIN="finder.sh"
+path=$(which finder.sh)
+if [ -z $path ]; then
+   # Path is empty assumer relative locations
+   FINDER_BIN="./finder.sh"
+fi
+
 
 if [ $# -lt 2 ]
 then
@@ -48,10 +69,14 @@ fi
 
 for i in $( seq 1 $NUMFILES)
 do
-	./writer "$WRITEDIR/${username}$i.txt" "$WRITESTR"
+	${WRITER_BIN} "$WRITEDIR/${username}$i.txt" "$WRITESTR"
 done
 
-OUTPUTSTRING=$(./finder.sh "$WRITEDIR" "$WRITESTR")
+OUTPUTSTRING=$(${FINDER_BIN} "$WRITEDIR" "$WRITESTR")
+
+# Modify your finder-test.sh script to write a file with output of the finder command
+# to /tmp/assignment-4-result.txt
+echo ${OUTPUTSTRING} > /tmp/assignment-4-result.txt
 
 set +e
 echo ${OUTPUTSTRING} | grep "${MATCHSTR}"
