@@ -133,6 +133,7 @@ int main(int argc, char **argv)
         // Close connection with client 
         close(clientfd);
         log_message(LOG_INFO, "Closed connection with %s", inet_ntoa(clientAddr.sin_addr));
+        break;
     }
 
     // Close socket
