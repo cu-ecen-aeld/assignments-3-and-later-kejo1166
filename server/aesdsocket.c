@@ -4,6 +4,8 @@
  * @date 2022-02-05
  * 
  * @brief 
+ *      Reference https://github.com/pasce/daemon-skeleton-linux-c for making a
+ *      C program into a daemon.
  * 
  * @copyright Copyright (c) 2022
  * 
@@ -33,6 +35,8 @@
 // ============================================================================
 
 #define DEBUG
+
+#define APP_NAME "aesdsocket"
 
 // Socket configuration
 #define PORT "9000"
@@ -113,6 +117,20 @@ static void cleanup(void);
  */
 static void sig_handler(int signo);
 
+/**
+ * @brief Setup application
+ * 
+ */
+static void setup(void);
+
+/**
+ * @brief Daemonize the application
+ * 
+ * @return true - On success
+ * @return false - On error
+ */
+static void daemonize(void);
+
 // ============================================================================
 // GLOBAL FUNCTIONS
 // ============================================================================
@@ -122,23 +140,10 @@ int main(int argc, char **argv)
     struct addrinfo hints;
     int status;
 
-    // Create logger
-    openlog(NULL, 0, LOG_USER);
-
-    // Configure signal interrupts
-    sig_t result = signal(SIGINT, sig_handler);
-    if (result == SIG_ERR)
-    {
-        log_message(LOG_ERR, "Error: could not register SIGINT errno=%d\n", result);
-        goto error;
-    }
-
-    result = signal(SIGTERM, sig_handler);
-    if (result == SIG_ERR)
-    {
-        log_message(LOG_ERR, "Error: could not register SIGTERM errno=%d\n", result);
-        goto error;
-    }
+    if ((argc >= 2) && (strcmp("-d", argv[1]) == 0))
+        daemonize();
+    else
+        setup();
 
     // Create storage file
     status = create_storage_file();
@@ -368,11 +373,12 @@ void cleanup(void)
     if (pServerInfo)
         freeaddrinfo(pServerInfo);
 
-     // Close sys log
-    closelog();
-
     // Remove storage file
+    log_message(LOG_INFO, "Removing \"%s\"", STORAGE_DATA_PATH);
     unlink(STORAGE_DATA_PATH);
+
+    // Close sys log
+    closelog();
 }
 
 void sig_handler(int signo)
@@ -380,4 +386,86 @@ void sig_handler(int signo)
     log_message(LOG_INFO, "Caught signal %d, exiting ...", signo);
     cleanup();
     exit(0);
+}
+
+void setup(void)
+{
+    // Create logger
+    openlog(APP_NAME, 0, LOG_USER);
+
+    // Configure signal interrupts
+    sig_t result = signal(SIGINT, sig_handler);
+    if (result == SIG_ERR)
+    {
+        log_message(LOG_ERR, "Error: could not register SIGINT errno=%d\n", result);
+        exit(-1);
+    }
+
+    result = signal(SIGTERM, sig_handler);
+    if (result == SIG_ERR)
+    {
+        log_message(LOG_ERR, "Error: could not register SIGTERM errno=%d\n", result);
+        exit(-1);
+    }
+}
+
+void daemonize(void)
+{
+    pid_t pid;
+    
+    /* Fork off the parent process */
+    pid = fork();
+    
+    /* An error occurred */
+    if (pid < 0)
+        exit(-1);
+    
+     /* Success: Let the parent terminate */
+    if (pid > 0)
+        exit(EXIT_SUCCESS);
+    
+    /* On success: The child process becomes session leader */
+    if (setsid() < 0)
+        exit(-1);
+    
+    /* Catch, ignore and handle signals */
+    signal(SIGCHLD, SIG_IGN);
+    signal(SIGHUP, SIG_IGN);
+
+    // Configure signal interrupts
+    sig_t result = signal(SIGINT, sig_handler);
+    if (result == SIG_ERR)
+        exit(-1);
+
+    result = signal(SIGTERM, sig_handler);
+    if (result == SIG_ERR)
+        exit(-1);
+    
+    /* Fork off for the second time*/
+    pid = fork();
+    
+    /* An error occurred */
+    if (pid < 0)
+        exit(-1);
+    
+    /* Success: Let the parent terminate */
+    if (pid > 0)
+        exit(EXIT_SUCCESS);
+    
+    /* Set new file permissions */
+    umask(0);
+    
+    /* Change the working directory to the root directory */
+    /* or another appropriated directory */
+    chdir("/");
+    
+    /* Close all open file descriptors */
+    int x;
+    for (x = sysconf(_SC_OPEN_MAX); x>=0; x--)
+    {
+        close (x);
+    }
+    
+    /* Open the log file */
+    openlog (APP_NAME, LOG_PID, LOG_DAEMON);
 }
