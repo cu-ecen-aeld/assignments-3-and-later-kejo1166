@@ -24,6 +24,8 @@
 #include <errno.h>
 #include <stdarg.h>
 #include <arpa/inet.h>
+#include <signal.h>
+#include <stdbool.h>
 
 // ============================================================================
 // PRIVATE MACROS AND DEFINES
@@ -48,6 +50,9 @@
 // ============================================================================
 // STATIC VARIABLES
 // ============================================================================
+
+static int serverfd = -1;
+static int clientfd = -1;
 
 // ============================================================================
 // GLOBAL VARIABLES
@@ -93,6 +98,13 @@ static int save_to_storage_file(char *pBuf, ssize_t size);
  */
 static int read_from_storage_file(char *pBuf, int offset, ssize_t maxSize);
 
+/**
+ * @brief Signal interrupt handler
+ * 
+ * @param signo - Enum of signal caught
+ */
+static void sig_handler(int signo);
+
 // ============================================================================
 // GLOBAL FUNCTIONS
 // ============================================================================
@@ -101,11 +113,18 @@ int main(int argc, char **argv)
 {
     struct addrinfo hints;
     struct addrinfo *pServerInfo;
-    int serverfd = -1;
     int status;
 
     // Create logger
     openlog(NULL, 0, LOG_USER);
+
+    // Configure signal interrupts
+    sig_t result = signal(SIGINT, sig_handler);
+    if (result == SIG_ERR)
+    {
+        log_message(LOG_ERR, "Error: could not register SIGINT errno=%d\n", result);
+        goto error;
+    }
 
     // Create storage file
     status = create_storage_file();
@@ -150,19 +169,18 @@ int main(int argc, char **argv)
         goto error;
     }
 
-    log_message(LOG_INFO, "Listening for clients on port %s ...", PORT);
-
     // Listen for connection forever
     while (1)
     {
         struct sockaddr_in clientAddr;                 // Specified address of accepted client
         socklen_t clientAddrSize = sizeof(clientAddr); // Size of client address
-        int clientfd;
         char buf[1024];
         ssize_t nRead;
         ssize_t nWrite;
         ssize_t spaceRemaining = sizeof(buf);
         int streamPos = 0;
+
+        log_message(LOG_INFO, "Listening for clients on port %s ...", PORT);
 
         // Accept incoming connections.  accept() will block until connection
         clientfd = accept(serverfd, (struct sockaddr *)&clientAddr, &clientAddrSize);
@@ -235,7 +253,7 @@ int main(int argc, char **argv)
                 }
 
                 // Increment position into file
-                rdPos += nWrite; 
+                rdPos += nWrite;
 
                 if (nWrite == nRead)
                 {
@@ -335,4 +353,9 @@ int read_from_storage_file(char *pBuf, int offset, ssize_t maxSize)
     lseek(fd, offset, SEEK_SET);
 
     return read(fd, pBuf, maxSize);
+}
+
+void sig_handler(int signo)
+{
+    printf("Caught signal");
 }
