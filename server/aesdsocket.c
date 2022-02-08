@@ -26,6 +26,7 @@
 #include <arpa/inet.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <stdlib.h>
 
 // ============================================================================
 // PRIVATE MACROS AND DEFINES
@@ -53,6 +54,7 @@
 
 static int serverfd = -1;
 static int clientfd = -1;
+static struct addrinfo *pServerInfo;
 
 // ============================================================================
 // GLOBAL VARIABLES
@@ -99,6 +101,12 @@ static int save_to_storage_file(char *pBuf, ssize_t size);
 static int read_from_storage_file(char *pBuf, int offset, ssize_t maxSize);
 
 /**
+ * @brief Cleanup 
+ * 
+ */
+static void cleanup(void);
+
+/**
  * @brief Signal interrupt handler
  * 
  * @param signo - Enum of signal caught
@@ -112,7 +120,6 @@ static void sig_handler(int signo);
 int main(int argc, char **argv)
 {
     struct addrinfo hints;
-    struct addrinfo *pServerInfo;
     int status;
 
     // Create logger
@@ -123,6 +130,13 @@ int main(int argc, char **argv)
     if (result == SIG_ERR)
     {
         log_message(LOG_ERR, "Error: could not register SIGINT errno=%d\n", result);
+        goto error;
+    }
+
+    result = signal(SIGTERM, sig_handler);
+    if (result == SIG_ERR)
+    {
+        log_message(LOG_ERR, "Error: could not register SIGTERM errno=%d\n", result);
         goto error;
     }
 
@@ -275,26 +289,11 @@ int main(int argc, char **argv)
         log_message(LOG_INFO, "Closed connection with %s", inet_ntoa(clientAddr.sin_addr));
     }
 
-    // Close socket
-    close(serverfd);
-
-    // Free allocated address info
-    if (pServerInfo)
-        freeaddrinfo(pServerInfo);
-
-    // Close sys log
-    closelog();
+    cleanup();
     return 0;
 
 error:
-    // Free allocated address info
-    if (pServerInfo)
-        freeaddrinfo(pServerInfo);
-
-    // Close server socket
-    if (serverfd > 0)
-        close(serverfd);
-    closelog(); // Close sys log
+    cleanup();
     return -1;
 }
 
@@ -355,7 +354,30 @@ int read_from_storage_file(char *pBuf, int offset, ssize_t maxSize)
     return read(fd, pBuf, maxSize);
 }
 
+void cleanup(void)
+{
+    // Close server socket
+    if (serverfd > 0)
+        close(serverfd);
+
+    // Close client socket
+    if (clientfd > 0)
+        close(clientfd);
+
+    // Free allocated address info
+    if (pServerInfo)
+        freeaddrinfo(pServerInfo);
+
+     // Close sys log
+    closelog();
+
+    // Remove storage file
+    unlink(STORAGE_DATA_PATH);
+}
+
 void sig_handler(int signo)
 {
-    printf("Caught signal");
+    log_message(LOG_INFO, "Caught signal %d, exiting ...", signo);
+    cleanup();
+    exit(0);
 }
