@@ -138,19 +138,26 @@ static void daemonize(void);
 int main(int argc, char **argv)
 {
     struct addrinfo hints;
-    int status;
+    int status = 0;
 
     if ((argc >= 2) && (strcmp("-d", argv[1]) == 0))
+    {
         daemonize();
+        log_message(LOG_ERR, "Daemon started");
+    }
     else
+    {
         setup();
+        log_message(LOG_ERR, "Started");
+    }
 
     // Create storage file
     status = create_storage_file();
     if (status != 0)
     {
         log_message(LOG_ERR, "Error: creating storeage file errno=%d\n", status);
-        goto error;
+        cleanup();
+        return -1;
     }
 
     // Clear data structure
@@ -163,7 +170,8 @@ int main(int argc, char **argv)
     if (status != 0)
     {
         log_message(LOG_ERR, "Error: getaddrinfo() %s\n", gai_strerror(status));
-        goto error;
+        cleanup();
+        return -1;
     }
 
     // Open socket connection
@@ -171,21 +179,32 @@ int main(int argc, char **argv)
     if (serverfd < 0)
     {
         log_message(LOG_ERR, "Error: opening socket, errno=%d\n", errno);
-        goto error;
+        cleanup();
+        return -1;
+    }
+
+    // Set socket options to allow re use of address
+    if (setsockopt(serverfd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) < 0)
+    {
+        log_message(LOG_ERR, "Error: could not set socket options, errno=%d\n", errno);
+        cleanup();
+        return -1;
     }
 
     // Bind device address to socket
     if (bind(serverfd, pServerInfo->ai_addr, pServerInfo->ai_addrlen) < 0)
     {
         log_message(LOG_ERR, "Error: binding socket errno=%d\n", errno);
-        goto error;
+        cleanup();
+        return -1;
     }
 
     // Listen for connection
     if (listen(serverfd, MAX_CONNECTIONS < 0))
     {
         log_message(LOG_ERR, "Error: listening for connection errno=%d\n", errno);
-        goto error;
+        cleanup();
+        return -1;
     }
 
     // Listen for connection forever
@@ -206,7 +225,8 @@ int main(int argc, char **argv)
         if (clientfd < 0)
         {
             log_message(LOG_ERR, "Error: failed to accept client errno=%d\n", errno);
-            goto error;
+            cleanup();
+            return -1;
         }
 
         log_message(LOG_INFO, "Accepted connection from %s", inet_ntoa(clientAddr.sin_addr));
@@ -296,10 +316,6 @@ int main(int argc, char **argv)
 
     cleanup();
     return 0;
-
-error:
-    cleanup();
-    return -1;
 }
 
 // ============================================================================
@@ -377,6 +393,8 @@ void cleanup(void)
     log_message(LOG_INFO, "Removing \"%s\"", STORAGE_DATA_PATH);
     unlink(STORAGE_DATA_PATH);
 
+    log_message(LOG_INFO, "Terminated");
+
     // Close sys log
     closelog();
 }
@@ -412,22 +430,22 @@ void setup(void)
 void daemonize(void)
 {
     pid_t pid;
-    
+
     /* Fork off the parent process */
     pid = fork();
-    
+
     /* An error occurred */
     if (pid < 0)
         exit(-1);
-    
-     /* Success: Let the parent terminate */
+
+    /* Success: Let the parent terminate */
     if (pid > 0)
         exit(EXIT_SUCCESS);
-    
+
     /* On success: The child process becomes session leader */
     if (setsid() < 0)
         exit(-1);
-    
+
     /* Catch, ignore and handle signals */
     signal(SIGCHLD, SIG_IGN);
     signal(SIGHUP, SIG_IGN);
@@ -440,32 +458,32 @@ void daemonize(void)
     result = signal(SIGTERM, sig_handler);
     if (result == SIG_ERR)
         exit(-1);
-    
+
     /* Fork off for the second time*/
     pid = fork();
-    
+
     /* An error occurred */
     if (pid < 0)
         exit(-1);
-    
+
     /* Success: Let the parent terminate */
     if (pid > 0)
         exit(EXIT_SUCCESS);
-    
+
     /* Set new file permissions */
     umask(0);
-    
+
     /* Change the working directory to the root directory */
     /* or another appropriated directory */
     chdir("/");
-    
+
     /* Close all open file descriptors */
     int x;
-    for (x = sysconf(_SC_OPEN_MAX); x>=0; x--)
+    for (x = sysconf(_SC_OPEN_MAX); x >= 0; x--)
     {
-        close (x);
+        close(x);
     }
-    
+
     /* Open the log file */
-    openlog (APP_NAME, LOG_PID, LOG_DAEMON);
+    openlog(APP_NAME, LOG_PID, LOG_DAEMON);
 }
