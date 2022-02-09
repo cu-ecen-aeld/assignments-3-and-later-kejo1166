@@ -350,7 +350,7 @@ void log_message(int logType, const char *fmt, ...)
 int create_file(void)
 {
     // File does not exist, so it must be created.
-    int fd = creat(STORAGE_DATA_PATH, 0755);
+    int fd = creat(STORAGE_DATA_PATH, 0766);
     if (fd < 0)
         return errno;
 
