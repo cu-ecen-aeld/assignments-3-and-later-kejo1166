@@ -83,7 +83,7 @@ static void log_message(int logType, const char *__fmt, ...);
  * @return int - 0 upon success; otherwise, error number
  *
  */
-static int create_storage_file(void);
+static int create_file(void);
 
 /**
  * @brief Save data to storage file
@@ -92,7 +92,7 @@ static int create_storage_file(void);
  * @param size - size of stream
  * @return int - 0 upon success; otherwise, error number
  */
-static int save_to_storage_file(char *pBuf, ssize_t size);
+static int write_file(char *pBuf, ssize_t size);
 
 /**
  * @brief Read from storage file
@@ -102,7 +102,7 @@ static int save_to_storage_file(char *pBuf, ssize_t size);
  * @param maxSize - Maximum read size
  * @return int 
  */
-static int read_from_storage_file(char *pBuf, int offset, ssize_t maxSize);
+static int read_file(char *pBuf, int offset, ssize_t maxSize);
 
 /**
  * @brief Cleanup 
@@ -152,7 +152,7 @@ int main(int argc, char **argv)
     }
 
     // Create storage file
-    status = create_storage_file();
+    status = create_file();
     if (status != 0)
     {
         log_message(LOG_ERR, "Error: creating storeage file errno=%d\n", status);
@@ -240,13 +240,23 @@ int main(int argc, char **argv)
                 log_message(LOG_ERR, "Error: reading from socket errno=%d\n", errno);
                 continue; // Continue reading data
             }
+            else if (nRead == 0)
+                continue; // Nothing read
+
+            log_message(LOG_DEBUG, "socket rd: %d bytes", nRead);
 
             // Save data received from client
-            status = save_to_storage_file(&buf[streamPos], nRead);
+            status = write_file(&buf[streamPos], nRead);
             if (status < 0)
             {
+                // Error reading from file
                 log_message(LOG_ERR, "Error: saving data to file errno=%d\n", status);
                 continue; // Continue reading data
+            }
+
+            if (strchr(&buf[streamPos], '\n'))
+            { // Found new line character, no send file back
+                break;
             }
             else if (nRead == status)
             {
@@ -260,10 +270,6 @@ int main(int argc, char **argv)
                 streamPos += nRead;
                 spaceRemaining -= nRead;
             }
-
-            // Once \n has been received, send storage file to client
-            if (strchr(buf, '\n'))
-                break;
         }
 
         // Write data to socket
@@ -272,9 +278,12 @@ int main(int argc, char **argv)
         spaceRemaining = sizeof(buf);
         while (1)
         {
-            nRead = read_from_storage_file(&buf[streamPos], rdPos, spaceRemaining);
+            nRead = read_file(&buf[streamPos], rdPos, spaceRemaining);
             if (nRead == 0)
-                break; // Done reading file
+            {
+                // EOF reached, done
+                break;
+            }
             else if (nRead < 0)
             {
                 log_message(LOG_ERR, "Error: reading from \"%s\" errno=%d\n", STORAGE_DATA_PATH, nRead);
@@ -290,6 +299,8 @@ int main(int argc, char **argv)
                     log_message(LOG_ERR, "Error: writing to client socket errno=%d\n", nWrite);
                     continue; // Continue reading data
                 }
+
+                log_message(LOG_DEBUG, "socket wr: %d bytes", nWrite);
 
                 // Increment position into file
                 rdPos += nWrite;
@@ -336,7 +347,7 @@ void log_message(int logType, const char *fmt, ...)
 #endif
 }
 
-int create_storage_file(void)
+int create_file(void)
 {
     // File does not exist, so it must be created.
     int fd = creat(STORAGE_DATA_PATH, 0755);
@@ -347,7 +358,7 @@ int create_storage_file(void)
     return 0;
 }
 
-int save_to_storage_file(char *pBuf, ssize_t size)
+int write_file(char *pBuf, ssize_t size)
 {
     int fd = open(STORAGE_DATA_PATH, O_WRONLY);
     if (fd < 0)
@@ -357,12 +368,12 @@ int save_to_storage_file(char *pBuf, ssize_t size)
     lseek(fd, 0, SEEK_END);
 
     // Write data to file
-    int count = write(fd, pBuf, size);
-
-    return (count == size) ? 0 : 1;
+    int nWrite = write(fd, pBuf, size);
+    close(fd);
+    return nWrite;
 }
 
-int read_from_storage_file(char *pBuf, int offset, ssize_t maxSize)
+int read_file(char *pBuf, int offset, ssize_t maxSize)
 {
     // Open file
     int fd = open(STORAGE_DATA_PATH, O_RDONLY);
@@ -372,7 +383,9 @@ int read_from_storage_file(char *pBuf, int offset, ssize_t maxSize)
     // Move to position
     lseek(fd, offset, SEEK_SET);
 
-    return read(fd, pBuf, maxSize);
+    int nRead = read(fd, pBuf, maxSize);
+    close(fd);
+    return nRead;
 }
 
 void cleanup(void)
