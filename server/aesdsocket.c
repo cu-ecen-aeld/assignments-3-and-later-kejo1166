@@ -2,13 +2,13 @@
  * @file aesdsocket.c
  * @author Kenneth A. Jones
  * @date 2022-02-05
- * 
- * @brief 
+ *
+ * @brief
  *      Reference https://github.com/pasce/daemon-skeleton-linux-c for making a
  *      C program into a daemon.
- * 
+ *
  * @copyright Copyright (c) 2022
- * 
+ *
  */
 
 // ============================================================================
@@ -70,16 +70,16 @@ static struct addrinfo *pServerInfo;
 
 /**
  * @brief Print message to syslog and terminal depending on configuration
- * 
+ *
  * @param logType - Syslog error type
  * @param __fmt - Formatted string
- * @param ... 
+ * @param ...
  */
 static void log_message(int logType, const char *__fmt, ...);
 
 /**
- * @brief Create a storage file 
- * 
+ * @brief Create a storage file
+ *
  * @return int - 0 upon success; otherwise, error number
  *
  */
@@ -87,7 +87,7 @@ static int create_file(void);
 
 /**
  * @brief Save data to storage file
- * 
+ *
  * @param pBuf - Pointer stream of data
  * @param size - size of stream
  * @return int - 0 upon success; otherwise, error number
@@ -96,36 +96,30 @@ static int write_file(char *pBuf, ssize_t size);
 
 /**
  * @brief Read from storage file
- * 
+ *
  * @param pBuf -Pointer to buffer
  * @param offset - Byte offset into file
  * @param maxSize - Maximum read size
- * @return int 
+ * @return int
  */
 static int read_file(char *pBuf, int offset, ssize_t maxSize);
 
 /**
- * @brief Cleanup 
- * 
+ * @brief Cleanup
+ *
  */
 static void cleanup(void);
 
 /**
  * @brief Signal interrupt handler
- * 
+ *
  * @param signo - Enum of signal caught
  */
 static void sig_handler(int signo);
 
 /**
- * @brief Setup application
- * 
- */
-static void setup(void);
-
-/**
  * @brief Daemonize the application
- * 
+ *
  * @return true - On success
  * @return false - On error
  */
@@ -139,16 +133,29 @@ int main(int argc, char **argv)
 {
     struct addrinfo hints;
     int status = 0;
+    bool runAsDaemon = false;
 
     if ((argc >= 2) && (strcmp("-d", argv[1]) == 0))
+        runAsDaemon = true;
+
+    // Create logger
+    openlog(APP_NAME, 0, LOG_USER);
+
+    // Configure signal interrupts
+    sig_t result = signal(SIGINT, sig_handler);
+    if (result == SIG_ERR)
     {
-        daemonize();
-        log_message(LOG_ERR, "Daemon started");
+        log_message(LOG_ERR, "Error: could not register SIGINT errno=%d\n", result);
+        cleanup();
+        return -1;
     }
-    else
+
+    result = signal(SIGTERM, sig_handler);
+    if (result == SIG_ERR)
     {
-        setup();
-        log_message(LOG_ERR, "Started");
+        log_message(LOG_ERR, "Error: could not register SIGTERM errno=%d\n", result);
+        cleanup();
+        return -1;
     }
 
     // Create storage file
@@ -207,6 +214,10 @@ int main(int argc, char **argv)
         return -1;
     }
 
+    // Run program as daemon
+    if (runAsDaemon)
+        daemonize();
+
     // Listen for connection forever
     while (1)
     {
@@ -238,6 +249,8 @@ int main(int argc, char **argv)
             if (nRead < 0)
             {
                 log_message(LOG_ERR, "Error: reading from socket errno=%d\n", errno);
+                streamPos = 0;
+                spaceRemaining = sizeof(buf);
                 continue; // Continue reading data
             }
             else if (nRead == 0)
@@ -419,58 +432,13 @@ void sig_handler(int signo)
     exit(0);
 }
 
-void setup(void)
-{
-    // Create logger
-    openlog(APP_NAME, 0, LOG_USER);
-
-    // Configure signal interrupts
-    sig_t result = signal(SIGINT, sig_handler);
-    if (result == SIG_ERR)
-    {
-        log_message(LOG_ERR, "Error: could not register SIGINT errno=%d\n", result);
-        exit(-1);
-    }
-
-    result = signal(SIGTERM, sig_handler);
-    if (result == SIG_ERR)
-    {
-        log_message(LOG_ERR, "Error: could not register SIGTERM errno=%d\n", result);
-        exit(-1);
-    }
-}
-
 void daemonize(void)
 {
     pid_t pid;
 
-    /* Fork off the parent process */
-    pid = fork();
-
-    /* An error occurred */
-    if (pid < 0)
-        exit(-1);
-
-    /* Success: Let the parent terminate */
-    if (pid > 0)
-        exit(EXIT_SUCCESS);
-
-    /* On success: The child process becomes session leader */
-    if (setsid() < 0)
-        exit(-1);
-
     /* Catch, ignore and handle signals */
     signal(SIGCHLD, SIG_IGN);
     signal(SIGHUP, SIG_IGN);
-
-    // Configure signal interrupts
-    sig_t result = signal(SIGINT, sig_handler);
-    if (result == SIG_ERR)
-        exit(-1);
-
-    result = signal(SIGTERM, sig_handler);
-    if (result == SIG_ERR)
-        exit(-1);
 
     /* Fork off for the second time*/
     pid = fork();
@@ -483,6 +451,10 @@ void daemonize(void)
     if (pid > 0)
         exit(EXIT_SUCCESS);
 
+    /* Set session ID */
+    if (setsid() < 0)
+        exit(-1);
+
     /* Set new file permissions */
     umask(0);
 
@@ -491,12 +463,14 @@ void daemonize(void)
     chdir("/");
 
     /* Close all open file descriptors */
-    int x;
-    for (x = sysconf(_SC_OPEN_MAX); x >= 0; x--)
-    {
-        close(x);
-    }
+    open("/dev/null", O_RDWR);
+    dup(STDIN_FILENO);
+    dup(STDOUT_FILENO);
+    dup(STDERR_FILENO);
 
-    /* Open the log file */
-    openlog(APP_NAME, LOG_PID, LOG_DAEMON);
+    close(STDIN_FILENO);
+    close(STDOUT_FILENO);
+    close(STDERR_FILENO);
+
+    syslog(LOG_INFO, "Running as daemon");
 }
