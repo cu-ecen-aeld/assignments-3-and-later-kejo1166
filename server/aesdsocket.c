@@ -117,14 +117,6 @@ static void cleanup(void);
  */
 static void sig_handler(int signo);
 
-/**
- * @brief Daemonize the application
- *
- * @return true - On success
- * @return false - On error
- */
-// static void daemonize(void);
-
 // ============================================================================
 // GLOBAL FUNCTIONS
 // ============================================================================
@@ -217,7 +209,7 @@ int main(int argc, char **argv)
 
     // Run program as daemon
     if (runAsDaemon)
-        daemon(0,0);//daemonize();
+        daemon(0,0);
 
     // Listen for connection forever
     while (1)
@@ -432,46 +424,3 @@ void sig_handler(int signo)
     cleanup();
     exit(0);
 }
-
-// void daemonize(void)
-// {
-//     pid_t pid;
-
-//     /* Catch, ignore and handle signals */
-//     signal(SIGCHLD, SIG_IGN);
-//     signal(SIGHUP, SIG_IGN);
-
-//     /* Fork off for the second time*/
-//     pid = fork();
-
-//     /* An error occurred */
-//     if (pid < 0)
-//         exit(-1);
-
-//     /* Success: Let the parent terminate */
-//     if (pid > 0)
-//         exit(EXIT_SUCCESS);
-
-//     /* Set session ID */
-//     if (setsid() < 0)
-//         exit(-1);
-
-//     /* Set new file permissions */
-//     umask(0);
-
-//     /* Change the working directory to the root directory */
-//     /* or another appropriated directory */
-//     chdir("/");
-
-//     /* Close all open file descriptors */
-//     open("/dev/null", O_RDWR);
-//     dup(STDIN_FILENO);
-//     dup(STDOUT_FILENO);
-//     dup(STDERR_FILENO);
-
-//     close(STDIN_FILENO);
-//     close(STDOUT_FILENO);
-//     close(STDERR_FILENO);
-
-//     syslog(LOG_INFO, "Running as daemon");
-// }
