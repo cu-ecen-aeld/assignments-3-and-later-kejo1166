@@ -173,6 +173,7 @@ int main(int argc, char **argv)
     // Get server info for IP address
     hints.ai_family = FAMILY;
     hints.ai_socktype = SOCKET_TYPE;
+    hints.ai_flags = FLAGS;
     status = getaddrinfo(NULL, PORT, &hints, &pServerInfo);
     if (status != 0)
     {
