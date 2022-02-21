@@ -52,6 +52,12 @@
 // PRIVATE TYPEDEFS
 // ============================================================================
 
+typedef struct
+{
+    int clientfd;
+    struct sockaddr_in clientAddr;
+}THREAD_PARAMS_T;
+
 // ============================================================================
 // STATIC VARIABLES
 // ============================================================================
@@ -116,6 +122,13 @@ static void cleanup(void);
  * @param signo - Enum of signal caught
  */
 static void sig_handler(int signo);
+
+/**
+ * @brief Handles all socket communication
+ * 
+ * @param args 
+ */
+static void handle_socket_comms(void *args);
 
 // ============================================================================
 // GLOBAL FUNCTIONS
@@ -209,18 +222,13 @@ int main(int argc, char **argv)
 
     // Run program as daemon
     if (runAsDaemon)
-        daemon(0,0);
+        daemon(0, 0);
 
     // Listen for connection forever
     while (1)
     {
         struct sockaddr_in clientAddr;                 // Specified address of accepted client
         socklen_t clientAddrSize = sizeof(clientAddr); // Size of client address
-        char buf[1024];
-        ssize_t nRead;
-        ssize_t nWrite;
-        ssize_t spaceRemaining = sizeof(buf);
-        int streamPos = 0;
 
         log_message(LOG_INFO, "Listening for clients on port %s ...", PORT);
 
@@ -235,100 +243,20 @@ int main(int argc, char **argv)
 
         log_message(LOG_INFO, "Accepted connection from %s", inet_ntoa(clientAddr.sin_addr));
 
-        // Read data from socket
-        while (1)
+        // Setup parameters to pass to socket communication handler
+        THREAD_PARAMS_T *args =  (THREAD_PARAMS_T *)malloc(sizeof(THREAD_PARAMS_T));
+        if ( args == NULL )
         {
-            nRead = read(clientfd, &buf[streamPos], spaceRemaining);
-            if (nRead < 0)
-            {
-                log_message(LOG_ERR, "Error: reading from socket errno=%d\n", errno);
-                streamPos = 0;
-                spaceRemaining = sizeof(buf);
-                continue; // Continue reading data
-            }
-            else if (nRead == 0)
-                continue; // Nothing read
-
-            log_message(LOG_DEBUG, "socket rd: %d bytes", nRead);
-
-            // Save data received from client
-            status = write_file(&buf[streamPos], nRead);
-            if (status < 0)
-            {
-                // Error reading from file
-                log_message(LOG_ERR, "Error: saving data to file errno=%d\n", status);
-                continue; // Continue reading data
-            }
-
-            if (strchr(&buf[streamPos], '\n'))
-            { // Found new line character, no send file back
-                break;
-            }
-            else if (nRead == status)
-            {
-                // All data was saved, reset
-                streamPos = 0;
-                spaceRemaining = sizeof(buf);
-            }
-            else
-            {
-                // All data wasn't saved
-                streamPos += nRead;
-                spaceRemaining -= nRead;
-            }
+            log_message(LOG_ERR, "Error: Could NOT allocate memory");
+            continue; // Not neccessary to exit program for this error
         }
+        args->clientfd = clientfd;
+        args->clientAddr = clientAddr;
 
-        // Write data to socket
-        int rdPos = 0;
-        streamPos = 0;
-        spaceRemaining = sizeof(buf);
-        while (1)
-        {
-            nRead = read_file(&buf[streamPos], rdPos, spaceRemaining);
-            if (nRead == 0)
-            {
-                // EOF reached, done
-                break;
-            }
-            else if (nRead < 0)
-            {
-                log_message(LOG_ERR, "Error: reading from \"%s\" errno=%d\n", STORAGE_DATA_PATH, nRead);
-                continue; // Continue reading data
-            }
-            else
-            {
-                // Write byte to socket
-                nWrite = write(clientfd, &buf[streamPos], nRead);
+        // Handle socket communication
+        handle_socket_comms((void*)args); 
 
-                if (nWrite < 0)
-                {
-                    log_message(LOG_ERR, "Error: writing to client socket errno=%d\n", nWrite);
-                    continue; // Continue reading data
-                }
-
-                log_message(LOG_DEBUG, "socket wr: %d bytes", nWrite);
-
-                // Increment position into file
-                rdPos += nWrite;
-
-                if (nWrite == nRead)
-                {
-                    // All data was saved, reset
-                    streamPos = 0;
-                    spaceRemaining = sizeof(buf);
-                }
-                else
-                {
-                    // Not all data was written
-                    streamPos += nWrite;
-                    spaceRemaining -= nWrite;
-                }
-            }
-        }
-
-        // Close connection with client
-        close(clientfd);
-        log_message(LOG_INFO, "Closed connection with %s", inet_ntoa(clientAddr.sin_addr));
+        free(args); // Release allocated memory
     }
 
     cleanup();
@@ -423,4 +351,111 @@ void sig_handler(int signo)
     log_message(LOG_INFO, "Caught signal %d, exiting ...", signo);
     cleanup();
     exit(0);
+}
+
+void handle_socket_comms(void *args)
+{
+
+    char buf[1024];
+    ssize_t nRead;
+    ssize_t nWrite;
+    ssize_t spaceRemaining = sizeof(buf);
+    int streamPos = 0;
+    int status;
+    THREAD_PARAMS_T *pTP = (THREAD_PARAMS_T*)args;
+
+    // Read data from socket
+    while (1)
+    {
+        nRead = read(clientfd, &buf[streamPos], spaceRemaining);
+        if (nRead < 0)
+        {
+            log_message(LOG_ERR, "Error: reading from socket errno=%d\n", errno);
+            streamPos = 0;
+            spaceRemaining = sizeof(buf);
+            continue; // Continue reading data
+        }
+        else if (nRead == 0)
+            continue; // Nothing read
+
+        log_message(LOG_DEBUG, "socket rd: %d bytes", nRead);
+
+        // Save data received from client
+        status = write_file(&buf[streamPos], nRead);
+        if (status < 0)
+        {
+            // Error reading from file
+            log_message(LOG_ERR, "Error: saving data to file errno=%d\n", status);
+            continue; // Continue reading data
+        }
+
+        if (strchr(&buf[streamPos], '\n'))
+        { // Found new line character, no send file back
+            break;
+        }
+        else if (nRead == status)
+        {
+            // All data was saved, reset
+            streamPos = 0;
+            spaceRemaining = sizeof(buf);
+        }
+        else
+        {
+            // All data wasn't saved
+            streamPos += nRead;
+            spaceRemaining -= nRead;
+        }
+    }
+
+    // Write data to socket
+    int rdPos = 0;
+    streamPos = 0;
+    spaceRemaining = sizeof(buf);
+    while (1)
+    {
+        nRead = read_file(&buf[streamPos], rdPos, spaceRemaining);
+        if (nRead == 0)
+        {
+            // EOF reached, done
+            break;
+        }
+        else if (nRead < 0)
+        {
+            log_message(LOG_ERR, "Error: reading from \"%s\" errno=%d\n", STORAGE_DATA_PATH, nRead);
+            continue; // Continue reading data
+        }
+        else
+        {
+            // Write byte to socket
+            nWrite = write(clientfd, &buf[streamPos], nRead);
+
+            if (nWrite < 0)
+            {
+                log_message(LOG_ERR, "Error: writing to client socket errno=%d\n", nWrite);
+                continue; // Continue reading data
+            }
+
+            log_message(LOG_DEBUG, "socket wr: %d bytes", nWrite);
+
+            // Increment position into file
+            rdPos += nWrite;
+
+            if (nWrite == nRead)
+            {
+                // All data was saved, reset
+                streamPos = 0;
+                spaceRemaining = sizeof(buf);
+            }
+            else
+            {
+                // Not all data was written
+                streamPos += nWrite;
+                spaceRemaining -= nWrite;
+            }
+        }
+    }
+
+    // Close connection with client
+    close(pTP->clientfd);
+    log_message(LOG_INFO, "Closed connection with %s", inet_ntoa(pTP->clientAddr.sin_addr));
 }
