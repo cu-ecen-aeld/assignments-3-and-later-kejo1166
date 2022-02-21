@@ -29,6 +29,7 @@
 #include <signal.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <pthread.h>
 
 // ============================================================================
 // PRIVATE MACROS AND DEFINES
@@ -56,7 +57,7 @@ typedef struct
 {
     int clientfd;
     struct sockaddr_in clientAddr;
-}THREAD_PARAMS_T;
+} THREAD_PARAMS_T;
 
 // ============================================================================
 // STATIC VARIABLES
@@ -65,6 +66,7 @@ typedef struct
 static int serverfd = -1;
 static int clientfd = -1;
 static struct addrinfo *pServerInfo;
+pthread_mutex_t writeMutex = PTHREAD_MUTEX_INITIALIZER; // Initialize mutex'
 
 // ============================================================================
 // GLOBAL VARIABLES
@@ -244,8 +246,8 @@ int main(int argc, char **argv)
         log_message(LOG_INFO, "Accepted connection from %s", inet_ntoa(clientAddr.sin_addr));
 
         // Setup parameters to pass to socket communication handler
-        THREAD_PARAMS_T *args =  (THREAD_PARAMS_T *)malloc(sizeof(THREAD_PARAMS_T));
-        if ( args == NULL )
+        THREAD_PARAMS_T *args = (THREAD_PARAMS_T *)malloc(sizeof(THREAD_PARAMS_T));
+        if (args == NULL)
         {
             log_message(LOG_ERR, "Error: Could NOT allocate memory");
             continue; // Not neccessary to exit program for this error
@@ -254,7 +256,7 @@ int main(int argc, char **argv)
         args->clientAddr = clientAddr;
 
         // Handle socket communication
-        handle_socket_comms((void*)args); 
+        handle_socket_comms((void *)args);
 
         free(args); // Release allocated memory
     }
@@ -294,9 +296,17 @@ int create_file(void)
 
 int write_file(char *pBuf, ssize_t size)
 {
+    if (pthread_mutex_lock(&writeMutex) != 0)
+    {
+        log_message(LOG_ERR, "Error: Could not acquire lock");
+        return -1;
+    }
+
     int fd = open(STORAGE_DATA_PATH, O_WRONLY);
     if (fd < 0)
+    {
         return errno;
+    }
 
     // Move to end of file
     lseek(fd, 0, SEEK_END);
@@ -304,6 +314,13 @@ int write_file(char *pBuf, ssize_t size)
     // Write data to file
     int nWrite = write(fd, pBuf, size);
     close(fd);
+
+    if (pthread_mutex_unlock(&writeMutex) != 0)
+    {
+        log_message(LOG_ERR, "Error: Could not release lock");
+        return -1;
+    }
+
     return nWrite;
 }
 
@@ -355,14 +372,13 @@ void sig_handler(int signo)
 
 void handle_socket_comms(void *args)
 {
-
     char buf[1024];
     ssize_t nRead;
     ssize_t nWrite;
     ssize_t spaceRemaining = sizeof(buf);
     int streamPos = 0;
     int status;
-    THREAD_PARAMS_T *pTP = (THREAD_PARAMS_T*)args;
+    THREAD_PARAMS_T *pTP = (THREAD_PARAMS_T *)args;
 
     // Read data from socket
     while (1)
