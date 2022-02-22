@@ -291,14 +291,12 @@ int main(int argc, char **argv)
         {
             if (pNode->params.threadStatus == SCKT_THREAD_DONE)
             {
-                log_message(LOG_DEBUG, "Thread %d has completed with status %d, removing from list",
+                log_message(LOG_DEBUG, "Thread %d has completed with status %d",
                             pNode->params.threadId, pNode->params.threadResult);
                 pthread_join(pNode->thread, NULL);                     // Thread has complete, join
-                SLIST_REMOVE(&scktHead, pNode, slist_data_s, entries); // Remove from link list
                 close(pNode->params.clientfd);
                 log_message(LOG_INFO, "Thread %d -- Closed connection with %s", pNode->params.threadId,
                             inet_ntoa(pNode->params.clientAddr.sin_addr));
-                free(pNode); // Free allocate memory
             }
         }
     }
@@ -311,6 +309,7 @@ int main(int argc, char **argv)
             log_message(LOG_DEBUG, "Canceling thread %d ...", pNode->params.threadId);
             pthread_cancel(pNode->thread);
         }
+        close(pNode->params.clientfd);
         SLIST_REMOVE(&scktHead, pNode, slist_data_s, entries); // Remove from link list
         free(pNode);                                           // Free allocate memory
     }
@@ -384,7 +383,6 @@ void *handle_socket_comms(void *pThreadParams)
     ssize_t nWrite;
     ssize_t spaceRemaining = sizeof(buf);
     char *pBuf;
-    char *pSend;
     int streamPos = 0;
     THREAD_PARAMS_T *pTP = (THREAD_PARAMS_T *)pThreadParams;
 
@@ -459,13 +457,6 @@ void *handle_socket_comms(void *pThreadParams)
 
     // Write data to socket
     int rdPos = 0;
-    pSend = (char *)malloc(sizeof(char) * (streamPos+1));
-    if (pSend == NULL)
-    {
-        log_message(LOG_ERR, "Thread %d -- Error: Could not allocate memory\n", pTP->threadId);
-        goto on_error;
-    }
-
     while(1)
     {
         
@@ -513,13 +504,11 @@ void *handle_socket_comms(void *pThreadParams)
 
     // Close connection with client
     free(pBuf); // Done with allocated memory
-    free(pSend);
     pTP->threadStatus = SCKT_THREAD_DONE;
     pthread_exit(NULL);
 
 on_error:
     free(pBuf); // Done with allocated memory
-    free(pSend);
     pTP->threadResult = -1;
     pTP->threadStatus = SCKT_THREAD_DONE;
     pthread_exit(NULL);
