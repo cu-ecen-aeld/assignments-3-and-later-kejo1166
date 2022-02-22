@@ -355,6 +355,9 @@ void cleanup(void)
     if (pServerInfo)
         freeaddrinfo(pServerInfo);
 
+    // Remove mutex
+    pthread_mutex_destroy(&writeMutex);
+
     log_message(LOG_INFO, "Terminated");
 
     // Close sys log
