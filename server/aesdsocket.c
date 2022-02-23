@@ -187,6 +187,9 @@ int main(int argc, char **argv)
     bool runAsDaemon = false;
     int threadNdx = 0;
 
+    // Initialize link list
+    SLIST_INIT(&scktHead);
+
     if ((argc >= 2) && (strcmp("-d", argv[1]) == 0))
         runAsDaemon = true;
 
@@ -273,9 +276,6 @@ int main(int argc, char **argv)
 
     // Create timer thread
     setup_timer(&filefd, &timerId);
-
-    // Initialize link list
-    SLIST_INIT(&scktHead);
 
     // Listen for connection forever
     while (!appShutdown)
@@ -368,9 +368,10 @@ void cleanup(void)
     SLINK_DATA_T *pNode;
 
     // Stop timer thread
-    if (timer_delete(timerId) != 0)
+    if (timerId != 0)
     {
-        log_message(LOG_ERR, "Error: could not delete timer\n");
+        if (timer_delete(timerId) != 0)
+            log_message(LOG_ERR, "Error: could not delete timer\n");
     }
 
     // Cancel any running threads
