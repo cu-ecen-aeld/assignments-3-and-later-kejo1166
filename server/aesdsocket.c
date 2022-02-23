@@ -253,7 +253,7 @@ int main(int argc, char **argv)
         cleanup();
         return -1;
     }
-    freeaddrinfo(pServerInfo); // no longer needed as we have sockfd
+    freeaddrinfo(pServerInfo); // Free allocated address info
 
     // Run program as daemon
     if (runAsDaemon)
@@ -301,7 +301,7 @@ int main(int argc, char **argv)
         // Poll socket for new events
         poll(socketsToPoll, 1, socketPollSleepMs);
         if (socketsToPoll[0].revents != POLLIN)
-            continue;
+            continue;  
 
         // Accept incoming connections.  accept() will block until connection
         clientfd = accept(serverfd, (struct sockaddr *)&clientAddr, &clientAddrSize);
@@ -420,10 +420,6 @@ void cleanup(void)
     // Close client socket
     if (clientfd > 0)
         close(clientfd);
-
-    // Free allocated address info
-    if (pServerInfo)
-        freeaddrinfo(pServerInfo);
 
     // Remove mutex
     pthread_mutex_destroy(&writeMutex);
