@@ -48,6 +48,8 @@
 
 #define BUFFER_SIZE 1024
 
+#define TIMER_INTERVAL_SEC 10
+
 // Socket configuration
 #define PORT "9000"
 #define FAMILY AF_INET
@@ -136,28 +138,11 @@ static void sig_handler(int signo);
 static void *handle_socket_comms(void *pThreadParams);
 
 /**
- * @brief Set the up timer object
- * 
- * @param pfd - Pointer to file descriptor
- * @param pTimerId - Pointer to timer ID
- */
-static void setup_timer(int *pfd, timer_t *pTimerId);
-
-/**
  * @brief Timer handler called at expiration of timer interval          
  * 
  * @param sigval 
  */
-static void handle_timer(union sigval sigval);
-
-/**
- * @brief Add the time information stored in a to b, storing the result in res
- * 
- * @param a - Time A
- * @param b - Time B
- * @param res 
- */
-static void timespec_add(const struct timespec *a, const struct timespec *b, struct timespec *res);
+static void *handle_timer(void *args);
 
 /**
  * @brief Acquire mutex
@@ -186,7 +171,7 @@ int main(int argc, char **argv)
     bool runAsDaemon = false;
     int threadNdx = 1;
     int filefd = -1;
-    timer_t timerId = 0;
+    //timer_t timerId = 0;
     SLINK_DATA_T *pNode;
     struct pollfd socketsToPoll[1];
     int socketPollSleepMs = 100;
@@ -234,6 +219,7 @@ int main(int argc, char **argv)
     if (serverfd < 0)
     {
         log_message(LOG_ERR, "Error: opening socket, errno=%d\n", errno);
+        freeaddrinfo(pServerInfo); // Free allocated address info
         cleanup();
         return -1;
     }
@@ -242,6 +228,7 @@ int main(int argc, char **argv)
     if (setsockopt(serverfd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) < 0)
     {
         log_message(LOG_ERR, "Error: could not set socket options, errno=%d\n", errno);
+        freeaddrinfo(pServerInfo); // Free allocated address info
         cleanup();
         return -1;
     }
@@ -250,6 +237,7 @@ int main(int argc, char **argv)
     if (bind(serverfd, pServerInfo->ai_addr, pServerInfo->ai_addrlen) < 0)
     {
         log_message(LOG_ERR, "Error: binding socket reason=%s\n", strerror(errno));
+        freeaddrinfo(pServerInfo); // Free allocated address info
         cleanup();
         return -1;
     }
@@ -277,7 +265,14 @@ int main(int argc, char **argv)
     }
 
     // Create timer thread
-    setup_timer(&filefd, &timerId);
+    //setup_timer(&filefd, &timerId);
+    pthread_t timerThread;
+    if (pthread_create(&timerThread, NULL, handle_timer, &filefd) != 0)
+    {
+        log_message(LOG_DEBUG, "Thread create timer thread\n");
+        cleanup();
+        return -1;
+    }
 
     log_message(LOG_INFO, "Listening for clients on port %s ...\n", PORT);
 
@@ -301,7 +296,7 @@ int main(int argc, char **argv)
         // Poll socket for new events
         poll(socketsToPoll, 1, socketPollSleepMs);
         if (socketsToPoll[0].revents != POLLIN)
-            continue;  
+            continue;
 
         // Accept incoming connections.  accept() will block until connection
         clientfd = accept(serverfd, (struct sockaddr *)&clientAddr, &clientAddrSize);
@@ -365,8 +360,7 @@ int main(int argc, char **argv)
     }
 
     // Stop timer thread
-    if (timer_delete(timerId) != 0)
-        log_message(LOG_ERR, "Error: could not delete timer\n");
+    pthread_join(timerThread, NULL);
 
     // Cancel any running threads
     while (!SLIST_EMPTY(&scktHead))
@@ -374,7 +368,7 @@ int main(int argc, char **argv)
         pNode = SLIST_FIRST(&scktHead);
         SLIST_REMOVE_HEAD(&scktHead, entries);
         log_message(LOG_DEBUG, "Freeing node @ %p ...\n", pNode);
-        free(pNode);                                         // Free allocate memory        
+        free(pNode); // Free allocate memory
         pNode = NULL;
     }
 
@@ -556,81 +550,55 @@ on_error:
     pthread_exit(NULL);
 }
 
-void setup_timer(int *pfd, timer_t *pTimerId)
+void *handle_timer(void *args)
 {
-    int clock_id = CLOCK_MONOTONIC;
-    struct sigevent sev;
-    struct timespec initTime = {0};
-    struct itimerspec itimerspec;
-
-    // Clear data structure
-    memset(&sev, 0, sizeof(struct sigevent));
-
-    sev.sigev_notify = SIGEV_THREAD;
-    sev.sigev_value.sival_ptr = pfd;
-    sev.sigev_notify_function = handle_timer;
-
-    // Create timer
-    if (timer_create(clock_id, &sev, pTimerId) != 0)
-    {
-        log_message(LOG_ERR, "Error: could not create timer \n");
-        return;
-    }
-
-    // Get the start time
-    if (clock_gettime(clock_id, &initTime) != 0)
-    {
-        log_message(LOG_ERR, "Error: getting time \n");
-        return;
-    }
-
-    // Setup timer interval. Set for 10.001
-    itimerspec.it_interval.tv_sec = 10;
-    itimerspec.it_interval.tv_nsec = 1000000;
-
-    // Add time information stored in itirmerspec to initTime and store in itimerspec.it_interval
-    timespec_add(&initTime, &itimerspec.it_interval, &itimerspec.it_value);
-
-    // Set timer
-    if (timer_settime(*pTimerId, TIMER_ABSTIME, &itimerspec, NULL) != 0)
-    {
-        log_message(LOG_ERR, "Error: could not set time for timer, [%s]\n", strerror(errno));
-        return;
-    }
-}
-
-void handle_timer(union sigval sigval)
-{
-    int *filefd = (int *)sigval.sival_ptr;
-    char buf[100] = {0};
+    int *filefd = (int *)args;
     size_t len;
     time_t ts;
     struct tm *localTime;
+    struct timespec currTime = {0, 0};
+    int count = TIMER_INTERVAL_SEC;
 
-    time(&ts);                  // Get the timestamp
-    localTime = localtime(&ts); // Convert to local time
-    len = strftime(buf, 100, "timestamp:%a, %d %b %Y %T %z\n", localTime);
-
-    log_message(LOG_DEBUG, "%s", buf);
-
-    // Write timestamp to file
-    if (!write_lock())
-        return;
-    if (write(*filefd, buf, len) < 0)
-        log_message(LOG_ERR, "Error: could not write timestamp to file\n");
-    if (!write_unlock())
-        return;
-}
-
-void timespec_add(const struct timespec *a, const struct timespec *b, struct timespec *res)
-{
-    res->tv_sec = a->tv_sec + b->tv_sec;
-    res->tv_nsec = a->tv_nsec + b->tv_nsec;
-    if (res->tv_nsec > 1000000000L)
+    while (!appShutdown)
     {
-        res->tv_nsec -= 1000000000L;
-        res->tv_sec++;
+        // Get current time
+        if (clock_gettime(CLOCK_MONOTONIC, &currTime), 0)
+        {
+            log_message(LOG_ERR, "Error: could get monotonic time, [%s]\n", strerror(errno));
+            continue;
+        }
+
+        if ((--count) <= 0)
+        {
+            char buf[100] = {0};
+            time(&ts);                  // Get the timestamp
+            localTime = localtime(&ts); // Convert to local time
+            len = strftime(buf, 100, "timestamp:%a, %d %b %Y %T %z\n", localTime);
+
+            log_message(LOG_DEBUG, "%s", buf);
+
+            // Write timestamp to file
+            write_lock();
+            if (write(*filefd, buf, len) < 0)
+                log_message(LOG_ERR, "Error: could not write timestamp to file\n");
+            write_unlock();
+            count = TIMER_INTERVAL_SEC;
+        }
+
+        currTime.tv_sec += 1; 
+        currTime.tv_nsec += 1000000;
+        if (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &currTime, NULL) != 0)
+        {
+            // The sleep was interrupted by a signal handler; see signal(7).
+            if (errno == EINTR)
+                break; // Exit thread
+
+            log_message(LOG_ERR, "Error: could not sleep, [%s]\n", strerror(errno));
+        }        
     }
+
+    log_message(LOG_INFO, "<<< Timer thread done  >>>\n");
+    pthread_exit(NULL);
 }
 
 bool write_lock(void)
