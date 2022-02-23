@@ -369,20 +369,14 @@ int main(int argc, char **argv)
         log_message(LOG_ERR, "Error: could not delete timer\n");
 
     // Cancel any running threads
-    SLIST_FOREACH(pNode, &scktHead, entries)
+    while (!SLIST_EMPTY(&scktHead))
     {
-        if (pNode->params.threadStatus != SCKT_THREAD_DONE)
-        {
-            log_message(LOG_DEBUG, "Canceling thread %d ...\n", pNode->params.threadId);
-            pthread_cancel(pNode->thread);
-        }   
-        pthread_join(pNode->thread, NULL); // Thread has complete, join     
-        close(pNode->params.clientfd);
-        SLIST_REMOVE(&scktHead, pNode, slist_data_s, entries); // Remove from link list
-        free(pNode);                                           // Free allocate memory
+        pNode = SLIST_FIRST(&scktHead);
+        SLIST_REMOVE_HEAD(&scktHead, entries);
+        log_message(LOG_DEBUG, "Freeing node @ %p ...\n", pNode);
+        free(pNode);                                         // Free allocate memory        
         pNode = NULL;
     }
-
 
     // Remove storage file
     close(filefd);
