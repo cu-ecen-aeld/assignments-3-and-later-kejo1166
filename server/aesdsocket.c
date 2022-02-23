@@ -6,6 +6,8 @@
  * @brief
  *      Reference https://github.com/pasce/daemon-skeleton-linux-c for making a
  *      C program into a daemon.
+ * 
+ *      Reference timer_thread.c (https://github.com/cu-ecen-aeld/aesd-lectures/blob/master/lecture9/timer_thread.c)
  *
  * @copyright Copyright (c) 2022
  *
@@ -31,6 +33,8 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include <sys/queue.h>
+#include <time.h>
+#include <sys/time.h>
 
 // ============================================================================
 // PRIVATE MACROS AND DEFINES
@@ -129,6 +133,46 @@ static void sig_handler(int signo);
  */
 static void *handle_socket_comms(void *pThreadParams);
 
+/**
+ * @brief Set the up timer object
+ * 
+ * @param pfd - Pointer to file descriptor
+ * @param pTimerId - Pointer to timer ID
+ */
+static void setup_timer(int *pfd, timer_t *pTimerId);
+
+/**
+ * @brief Timer handler called at expiration of timer interval          
+ * 
+ * @param sigval 
+ */
+static void handle_timer(union sigval sigval);
+
+/**
+ * @brief Add the time information stored in a to b, storing the result in res
+ * 
+ * @param a - Time A
+ * @param b - Time B
+ * @param res 
+ */
+static void timespec_add(const struct timespec *a, const struct timespec *b, struct timespec *res);
+
+/**
+ * @brief Acquire mutex
+ * 
+ * @return true 
+ * @return false 
+ */
+static bool write_lock(void);
+
+/**
+ * @brief Release mutex
+ * 
+ * @return true 
+ * @return false 
+ */
+static bool write_unlock(void);
+
 // ============================================================================
 // GLOBAL FUNCTIONS
 // ============================================================================
@@ -140,6 +184,7 @@ int main(int argc, char **argv)
     bool runAsDaemon = false;
     int threadNdx = 0;
     int filefd = -1;
+    timer_t timerId = 0;
     SLINK_DATA_T *pNode;
 
     if ((argc >= 2) && (strcmp("-d", argv[1]) == 0))
@@ -165,18 +210,10 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    // Create storage file
-    // status = create_file();
-    // if (status != 0)
-    // {
-    //     log_message(LOG_ERR, "Error: creating storeage file errno=%d\n", status);
-    //     cleanup();
-    //     return -1;
-    // }
     //create or open file to store received packets
-    filefd = open(STORAGE_DATA_PATH, O_CREAT | O_RDWR | O_APPEND | O_TRUNC, 0764);
+    filefd = open(STORAGE_DATA_PATH, O_CREAT | O_RDWR | O_APPEND | O_TRUNC, 0766);
     if (filefd == -1)
-    { //if error
+    {
         log_message(LOG_ERR, "Error: could not create file '%s'\n", STORAGE_DATA_PATH);
         cleanup();
         return -1;
@@ -234,6 +271,9 @@ int main(int argc, char **argv)
     if (runAsDaemon)
         daemon(0, 0);
 
+    if (1)
+        setup_timer(&filefd, &timerId);
+
     // Initialize link list
     SLIST_HEAD(slisthead, slist_data_s)
     scktHead;
@@ -245,7 +285,7 @@ int main(int argc, char **argv)
         struct sockaddr_in clientAddr;                 // Specified address of accepted client
         socklen_t clientAddrSize = sizeof(clientAddr); // Size of client address
 
-        log_message(LOG_INFO, "Listening for clients on port %s ...", PORT);
+        log_message(LOG_INFO, "Listening for clients on port %s ...\n", PORT);
 
         if (threadNdx >= __INT32_MAX__)
             threadNdx = 0;
@@ -264,14 +304,14 @@ int main(int argc, char **argv)
             return -1;
         }
 
-        log_message(LOG_INFO, "Accepted connection from %s", inet_ntoa(clientAddr.sin_addr));
+        log_message(LOG_INFO, "Accepted connection from %s\n", inet_ntoa(clientAddr.sin_addr));
 
         // Setup parameters to pass to socket communication handler
         pNode = (SLINK_DATA_T *)malloc(sizeof(SLINK_DATA_T));
         if (pNode == NULL)
         {
-            log_message(LOG_ERR, "Error: Could NOT allocate memory");
-            continue; // Not neccessary to exit program for this error
+            log_message(LOG_ERR, "Error: Could NOT allocate memory\n");
+            continue; // Not necessary to exit program for this error
         }
         pNode->params.threadId = ++threadNdx;
         pNode->params.threadResult = 0;
@@ -291,11 +331,11 @@ int main(int argc, char **argv)
         {
             if (pNode->params.threadStatus == SCKT_THREAD_DONE)
             {
-                log_message(LOG_DEBUG, "Thread %d has completed with status %d",
+                log_message(LOG_DEBUG, "Thread %d has completed with status %d\n",
                             pNode->params.threadId, pNode->params.threadResult);
-                pthread_join(pNode->thread, NULL);                     // Thread has complete, join
+                pthread_join(pNode->thread, NULL); // Thread has complete, join
                 close(pNode->params.clientfd);
-                log_message(LOG_INFO, "Thread %d -- Closed connection with %s", pNode->params.threadId,
+                log_message(LOG_INFO, "Thread %d -- Closed connection with %s\n", pNode->params.threadId,
                             inet_ntoa(pNode->params.clientAddr.sin_addr));
             }
         }
@@ -306,7 +346,7 @@ int main(int argc, char **argv)
     {
         if (pNode->params.threadStatus == SCKT_THREAD_RUNNING)
         {
-            log_message(LOG_DEBUG, "Canceling thread %d ...", pNode->params.threadId);
+            log_message(LOG_DEBUG, "Canceling thread %d ...\n", pNode->params.threadId);
             pthread_cancel(pNode->thread);
         }
         close(pNode->params.clientfd);
@@ -316,7 +356,7 @@ int main(int argc, char **argv)
 
     // Remove storage file
     close(filefd);
-    log_message(LOG_INFO, "Removing \"%s\"", STORAGE_DATA_PATH);
+    log_message(LOG_INFO, "Removing \"%s\"\n", STORAGE_DATA_PATH);
     unlink(STORAGE_DATA_PATH);
 
     cleanup();
@@ -337,7 +377,7 @@ void log_message(int logType, const char *fmt, ...)
 
     syslog(logType, "%s", buf);
 #ifdef DEBUG
-    printf("%s\n", buf);
+    printf("%s", buf);
 #endif
 }
 
@@ -358,7 +398,7 @@ void cleanup(void)
     // Remove mutex
     pthread_mutex_destroy(&writeMutex);
 
-    log_message(LOG_INFO, "Terminated");
+    log_message(LOG_INFO, "Terminated\n");
 
     // Close sys log
     closelog();
@@ -370,11 +410,12 @@ void sig_handler(int signo)
     {
     case SIGINT:
     case SIGTERM:
-        log_message(LOG_INFO, "Caught signal %d, exiting ...", signo);
+        log_message(LOG_INFO, "Caught signal %d, exiting ...\n", signo);
         appShutdown = true;
         break;
     default:
-        log_message(LOG_INFO, "Caught signal %d, ignoring ...", signo);
+    log_message(LOG_INFO, "Terminated");
+        log_message(LOG_INFO, "Caught signal %d, ignoring ...\n", signo);
         break;
     }
 }
@@ -409,7 +450,7 @@ void *handle_socket_comms(void *pThreadParams)
         else if (nRead == 0)
             continue; // Nothing read
 
-        log_message(LOG_DEBUG, "Thread %d -- socket rd: %d bytes", pTP->threadId, nRead);
+        log_message(LOG_DEBUG, "Thread %d -- socket rd: %d bytes\n", pTP->threadId, nRead);
 
         if (nRead > spaceRemaining)
         {
@@ -424,7 +465,6 @@ void *handle_socket_comms(void *pThreadParams)
         }
         memcpy(&pBuf[streamPos], buf, nRead);
         streamPos += nRead;
-
         spaceRemaining -= nRead;
 
         if (strchr(buf, '\n'))
@@ -436,11 +476,8 @@ void *handle_socket_comms(void *pThreadParams)
     //log_message(LOG_DEBUG, "String: %s", pBuf);
 
     // Write data to file
-    if (pthread_mutex_lock(&writeMutex) != 0)
-    {
-        log_message(LOG_ERR, "Error: Could not acquire lock");
+    if (!write_lock())
         goto on_error;
-    }
 
     // Save data received from client
     nWrite = write(pTP->filefd, pBuf, streamPos);
@@ -452,29 +489,21 @@ void *handle_socket_comms(void *pThreadParams)
 
     lseek(pTP->filefd, 0, SEEK_SET); // go to begining of file
 
-    if (pthread_mutex_unlock(&writeMutex) != 0)
-    {
-        log_message(LOG_ERR, "Thread %d -- Could not release lock\n", pTP->threadId);
+    if (!write_unlock())
         goto on_error;
-    }
 
     // Write data to socket
     int rdPos = 0;
-    while(1)
+    while (1)
     {
-        
-        if (pthread_mutex_lock(&writeMutex) != 0)
-        {
-            log_message(LOG_ERR, "Error: Could not acquire lock");
+
+        if (!write_lock())
             goto on_error;
-        }
+
         nRead = read(pTP->filefd, buf, BUFFER_SIZE); // read_file(buf, rdPos, sizeof(buf));
 
-        if (pthread_mutex_unlock(&writeMutex) != 0)
-        {
-            log_message(LOG_ERR, "Thread %d -- Could not release lock\n", pTP->threadId);
+        if (!write_unlock())
             goto on_error;
-        }
 
         if (nRead == 0)
         {
@@ -498,7 +527,7 @@ void *handle_socket_comms(void *pThreadParams)
                 continue; // Continue reading data
             }
 
-            log_message(LOG_DEBUG, "Thread %d -- socket wr: %d bytes", pTP->threadId, nWrite);
+            log_message(LOG_DEBUG, "Thread %d -- socket wr: %d bytes\n", pTP->threadId, nWrite);
 
             // Increment position into file
             rdPos += nWrite;
@@ -515,4 +544,101 @@ on_error:
     pTP->threadResult = -1;
     pTP->threadStatus = SCKT_THREAD_DONE;
     pthread_exit(NULL);
+}
+
+void setup_timer(int *pfd, timer_t *pTimerId)
+{
+    int clock_id = CLOCK_MONOTONIC;
+    struct sigevent sev;
+    struct timespec initTime = {0};
+    struct itimerspec itimerspec;
+
+    // Clear data structure
+    memset(&sev, 0, sizeof(struct sigevent));
+
+    sev.sigev_notify = SIGEV_THREAD;
+    sev.sigev_value.sival_ptr = pfd;
+    sev.sigev_notify_function = handle_timer;
+
+    // Create timer
+    if (timer_create(clock_id, &sev, pTimerId) != 0)
+    {
+        log_message(LOG_ERR, "Error: could not create timer \n");
+        return;
+    }
+
+    // Get the start time
+    if (clock_gettime(clock_id, &initTime) != 0)
+    {
+        log_message(LOG_ERR, "Error: getting time \n");
+        return;
+    }
+
+    // Setup timer interval. Set for 10.001
+    itimerspec.it_interval.tv_sec = 10;
+    itimerspec.it_interval.tv_nsec = 1000000;
+
+    // Add time information stored in itirmerspec to initTime and store in itimerspec.it_interval
+    timespec_add(&initTime, &itimerspec.it_interval, &itimerspec.it_value);
+
+    // Set timer
+    if (timer_settime(*pTimerId, TIMER_ABSTIME, &itimerspec, NULL) != 0)
+    {
+        log_message(LOG_ERR, "Error: could not set time for timer, [%s]\n", strerror(errno));
+        return;
+    }
+}
+
+void handle_timer(union sigval sigval)
+{
+    int *filefd = (int *)sigval.sival_ptr;
+    char buf[100] = {0};
+    size_t len;
+    time_t ts;
+    struct tm *localTime;
+
+    time(&ts);                  // Get the timestamp
+    localTime = localtime(&ts); // Convert to local time
+    len = strftime(buf, 100, "timestamp:%a, %d %b %Y %T %z\n", localTime);
+
+    log_message(LOG_DEBUG, "%s", buf);
+    
+    // Write timestamp to file
+    if (!write_lock())
+        return;
+    if (write(*filefd, buf, len) < 0)
+        log_message(LOG_ERR, "Error: could not write timestamp to file");
+    if (!write_unlock())
+        return;
+}
+
+void timespec_add(const struct timespec *a, const struct timespec *b, struct timespec *res)
+{
+    res->tv_sec = a->tv_sec + b->tv_sec;
+    res->tv_nsec = a->tv_nsec + b->tv_nsec;
+    if (res->tv_nsec > 1000000000L)
+    {
+        res->tv_nsec -= 1000000000L;
+        res->tv_sec++;
+    }
+}
+
+bool write_lock(void)
+{
+    if (pthread_mutex_lock(&writeMutex) != 0)
+    {
+        log_message(LOG_ERR, "Error: Could not acquire lock\n");
+        return false;
+    }
+    return true;
+}
+
+bool write_unlock(void)
+{
+    if (pthread_mutex_unlock(&writeMutex) != 0)
+    {
+        log_message(LOG_ERR, "Error: Could not release lock\n");
+        return false;
+    }
+    return true;
 }
