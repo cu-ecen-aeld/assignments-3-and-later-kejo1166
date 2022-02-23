@@ -627,7 +627,7 @@ void handle_timer(union sigval sigval)
     if (!write_lock())
         return;
     if (write(*filefd, buf, len) < 0)
-        log_message(LOG_ERR, "Error: could not write timestamp to file");
+        log_message(LOG_ERR, "Error: could not write timestamp to file\n");
     if (!write_unlock())
         return;
 }
