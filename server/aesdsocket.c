@@ -73,7 +73,7 @@ typedef struct
     int threadResult;
     SOCKET_THREAD_STATES_T threadStatus;
     int clientfd;
-    int filefd;
+    int fd;
     struct sockaddr_in clientAddr;
 } THREAD_PARAMS_T;
 
@@ -92,8 +92,11 @@ struct slist_data_s
 
 static int serverfd = -1;
 static int clientfd = -1;
+static int filefd = -1;
+static timer_t timerId = 0;
 static struct addrinfo *pServerInfo;
 static bool appShutdown = false;
+static SLIST_HEAD(slisthead, slist_data_s) scktHead;
 static pthread_mutex_t writeMutex = PTHREAD_MUTEX_INITIALIZER; // Initialize mutex'
 
 // ============================================================================
@@ -183,9 +186,6 @@ int main(int argc, char **argv)
     int status = 0;
     bool runAsDaemon = false;
     int threadNdx = 0;
-    int filefd = -1;
-    timer_t timerId = 0;
-    SLINK_DATA_T *pNode;
 
     if ((argc >= 2) && (strcmp("-d", argv[1]) == 0))
         runAsDaemon = true;
@@ -271,12 +271,10 @@ int main(int argc, char **argv)
     if (runAsDaemon)
         daemon(0, 0);
 
-    if (1)
-        setup_timer(&filefd, &timerId);
+    // Create timer thread
+    setup_timer(&filefd, &timerId);
 
     // Initialize link list
-    SLIST_HEAD(slisthead, slist_data_s)
-    scktHead;
     SLIST_INIT(&scktHead);
 
     // Listen for connection forever
@@ -307,7 +305,7 @@ int main(int argc, char **argv)
         log_message(LOG_INFO, "Accepted connection from %s\n", inet_ntoa(clientAddr.sin_addr));
 
         // Setup parameters to pass to socket communication handler
-        pNode = (SLINK_DATA_T *)malloc(sizeof(SLINK_DATA_T));
+        SLINK_DATA_T *pNode = (SLINK_DATA_T *)malloc(sizeof(SLINK_DATA_T));
         if (pNode == NULL)
         {
             log_message(LOG_ERR, "Error: Could NOT allocate memory\n");
@@ -317,7 +315,7 @@ int main(int argc, char **argv)
         pNode->params.threadResult = 0;
         pNode->params.threadStatus = SCKT_THREAD_IDLE;
         pNode->params.clientfd = clientfd;
-        pNode->params.filefd = filefd;
+        pNode->params.fd = filefd;
         pNode->params.clientAddr = clientAddr;
 
         // Insert into link list
@@ -341,25 +339,9 @@ int main(int argc, char **argv)
         }
     }
 
-    // Cancel any running threads
-    SLIST_FOREACH(pNode, &scktHead, entries)
-    {
-        if (pNode->params.threadStatus == SCKT_THREAD_RUNNING)
-        {
-            log_message(LOG_DEBUG, "Canceling thread %d ...\n", pNode->params.threadId);
-            pthread_cancel(pNode->thread);
-        }
-        close(pNode->params.clientfd);
-        SLIST_REMOVE(&scktHead, pNode, slist_data_s, entries); // Remove from link list
-        free(pNode);                                           // Free allocate memory
-    }
-
-    // Remove storage file
-    close(filefd);
-    log_message(LOG_INFO, "Removing \"%s\"\n", STORAGE_DATA_PATH);
-    unlink(STORAGE_DATA_PATH);
-
-    cleanup();
+    // Stay here.  App will only close for from a signal
+    log_message(LOG_INFO, "Waiting for signal handler to cleanup");
+    while(1);
     return 0;
 }
 
@@ -383,6 +365,27 @@ void log_message(int logType, const char *fmt, ...)
 
 void cleanup(void)
 {
+    SLINK_DATA_T *pNode;
+
+    // Stop timer thread
+    if (timer_delete(timerId) != 0)
+    {
+        log_message(LOG_ERR, "Error: could not delete timer\n");
+    }
+
+    // Cancel any running threads
+    SLIST_FOREACH(pNode, &scktHead, entries)
+    {
+        if (pNode->params.threadStatus == SCKT_THREAD_RUNNING)
+        {
+            log_message(LOG_DEBUG, "Canceling thread %d ...\n", pNode->params.threadId);
+            pthread_cancel(pNode->thread);
+        }
+        close(pNode->params.clientfd);
+        SLIST_REMOVE(&scktHead, pNode, slist_data_s, entries); // Remove from link list
+        free(pNode);                                           // Free allocate memory
+    }
+
     // Close server socket
     if (serverfd > 0)
         close(serverfd);
@@ -395,6 +398,11 @@ void cleanup(void)
     if (pServerInfo)
         freeaddrinfo(pServerInfo);
 
+    // Remove storage file
+    close(filefd);
+    log_message(LOG_INFO, "Removing \"%s\"\n", STORAGE_DATA_PATH);
+    unlink(STORAGE_DATA_PATH);
+
     // Remove mutex
     pthread_mutex_destroy(&writeMutex);
 
@@ -406,18 +414,11 @@ void cleanup(void)
 
 void sig_handler(int signo)
 {
-    switch (signo)
-    {
-    case SIGINT:
-    case SIGTERM:
-        log_message(LOG_INFO, "Caught signal %d, exiting ...\n", signo);
-        appShutdown = true;
-        break;
-    default:
-    log_message(LOG_INFO, "Terminated");
-        log_message(LOG_INFO, "Caught signal %d, ignoring ...\n", signo);
-        break;
-    }
+    log_message(LOG_INFO, "Caught signal %d, exiting ...\n", signo);
+    appShutdown = true;
+    sleep(1); // Allow some time for socket communication thread to terminate
+    cleanup();
+    exit(0);
 }
 
 void *handle_socket_comms(void *pThreadParams)
@@ -480,14 +481,14 @@ void *handle_socket_comms(void *pThreadParams)
         goto on_error;
 
     // Save data received from client
-    nWrite = write(pTP->filefd, pBuf, streamPos);
+    nWrite = write(pTP->fd, pBuf, streamPos);
     if (nWrite == -1)
     {
         log_message(LOG_ERR, "Thread %d -- Error: writing to file\n", pTP->threadId);
         goto on_error;
     }
 
-    lseek(pTP->filefd, 0, SEEK_SET); // go to begining of file
+    lseek(pTP->fd, 0, SEEK_SET); // go to begining of file
 
     if (!write_unlock())
         goto on_error;
@@ -500,7 +501,7 @@ void *handle_socket_comms(void *pThreadParams)
         if (!write_lock())
             goto on_error;
 
-        nRead = read(pTP->filefd, buf, BUFFER_SIZE); // read_file(buf, rdPos, sizeof(buf));
+        nRead = read(pTP->fd, buf, BUFFER_SIZE); // read_file(buf, rdPos, sizeof(buf));
 
         if (!write_unlock())
             goto on_error;
@@ -602,7 +603,7 @@ void handle_timer(union sigval sigval)
     len = strftime(buf, 100, "timestamp:%a, %d %b %Y %T %z\n", localTime);
 
     log_message(LOG_DEBUG, "%s", buf);
-    
+
     // Write timestamp to file
     if (!write_lock())
         return;
