@@ -182,6 +182,8 @@ int main(int argc, char **argv)
     // Create logger
     openlog(APP_NAME, 0, LOG_USER);
 
+    log_message(LOG_DEBUG, "Starting aesdsocket ...\n");
+
     // Configure signal interrupts
     sig_t result = signal(SIGINT, sig_handler);
     if (result == SIG_ERR)
@@ -245,7 +247,10 @@ int main(int argc, char **argv)
 
     // Run program as daemon
     if (runAsDaemon)
+    {
+        log_message(LOG_DEBUG, "Running as daemon ...\n");
         daemon(0, 0);
+    }
 
     // Listen for connection
     if (listen(serverfd, MAX_CONNECTIONS) < 0)
