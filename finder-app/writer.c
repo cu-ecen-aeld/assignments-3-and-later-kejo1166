@@ -14,7 +14,11 @@
 // ============================================================================
 #include <stdio.h>
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <syslog.h>
+#include <string.h>
+#include <unistd.h>
 
 // ============================================================================
 // PRIVATE MACROS AND DEFINES
@@ -50,30 +54,41 @@ int main(int argc, char **argv)
    // Validate enough arguments have been passed
    if (argc < MAX_ARGC)
    {
-      printf("error1");
       syslog(LOG_ERR, "Error: Invalid number of arguments passed <path to file> <text string>");
+      closelog(); // Close sys log
       return 1; // Return error
    }
 
    // Assuming arg1 is valid, open file with write permissions.
-   FILE *fd = fopen(argv[1], "w");
-   if (fd == NULL)
+   int fd = creat(argv[1], 0755);
+   if (fd < 0)
+   {
+      syslog(LOG_ERR, "Error: Creating file \"%s\"", argv[1]);
+      closelog(); // Close sys log
+      return 1;
+   }
+
+   fd = open(argv[1], O_WRONLY);
+   if (fd < 0)
    {
       syslog(LOG_ERR, "Error: Failed to open \"%s\"", argv[1]);
+      closelog(); // Close sys log
       return 1;
    }
 
    // Write string to file
    syslog(LOG_DEBUG, "Writing \"%s\" to \"%s\"", argv[2], argv[1]);
-   if (fputs(argv[2], fd) < 0)
+   if (write(fd, (char*)argv[2], strlen(argv[2])) < 0)
    {
       syslog(LOG_ERR, "Error: Failed to write \"%s\" to \"%s\"", argv[2], argv[1]);
-      fclose(fd); // Close file
+      close(fd); // Close file
+      closelog(); // Close sys log
       return 1;
    }
 
    // Successfully wrote message to file.
-   fclose(fd); // Close file
+   close(fd); // Close file
+   closelog(); // Close sys log
    return 0;
 }
 
