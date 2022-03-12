@@ -150,7 +150,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 	retval = count - nWrite;
 
 	// Update entry size
-	pDev->entry.size = retval;
+	pDev->entry.size += retval;
 
 	// Check for termination
 	if (memchr(pDev->entry.buffptr, '\n', pDev->entry.size) != NULL)
