@@ -124,7 +124,7 @@ void aesd_circular_buffer_deinit(struct aesd_circular_buffer *buffer)
         kfree(pEntry->buffptr);
 #else
         // User space
-        free(pEntry->buffptr);
+        free((void*)pEntry->buffptr);
 #endif
     }
 }
