@@ -58,7 +58,12 @@
 #define MAX_CONNECTIONS 50
 
 // Socket data storage
-#define STORAGE_DATA_PATH "/var/tmp/aesdsocketdata"
+#define USE_AESD_CHAR_DEVICE 1
+#ifdef USE_AESD_CHAR_DEVICE
+    #define STORAGE_DATA_PATH "/dev/aesdchar"
+#else
+    #define STORAGE_DATA_PATH "/var/tmp/aesdsocketdata"
+#endif
 
 // ============================================================================
 // PRIVATE TYPEDEFS
@@ -379,8 +384,10 @@ int main(int argc, char **argv)
 
     // Remove storage file
     close(filefd);
+#ifndef USE_AESD_CHAR_DEVICE
     log_message(LOG_INFO, "Removing \"%s\"\n", STORAGE_DATA_PATH);
     unlink(STORAGE_DATA_PATH);
+#endif
 
     cleanup();
     return 0;
@@ -557,10 +564,6 @@ on_error:
 
 void *handle_timer(void *args)
 {
-    int *filefd = (int *)args;
-    size_t len;
-    time_t ts;
-    struct tm *localTime;
     struct timespec currTime = {0, 0};
     int count = TIMER_INTERVAL_SEC;
 
@@ -575,18 +578,6 @@ void *handle_timer(void *args)
 
         if ((--count) <= 0)
         {
-            char buf[100] = {0};
-            time(&ts);                  // Get the timestamp
-            localTime = localtime(&ts); // Convert to local time
-            len = strftime(buf, 100, "timestamp:%a, %d %b %Y %T %z\n", localTime);
-
-            log_message(LOG_DEBUG, "%s", buf);
-
-            // Write timestamp to file
-            write_lock();
-            if (write(*filefd, buf, len) < 0)
-                log_message(LOG_ERR, "Error: could not write timestamp to file\n");
-            write_unlock();
             count = TIMER_INTERVAL_SEC;
         }
 
