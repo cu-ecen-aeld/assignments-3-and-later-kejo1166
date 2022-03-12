@@ -106,7 +106,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 	ssize_t retval = -ENOMEM;
 	struct aesd_dev *pDev = (struct aesd_dev *)filp->private_data; // Get access to device driver
 	ssize_t nWrite;
-
+	const char* pFree_entry = NULL;
 	PDEBUG("write %zu bytes with offset %lld", count, *f_pos);
 	
 	// Acquire device mutex
@@ -156,7 +156,11 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 	if (memchr(pDev->entry.buffptr, '\n', pDev->entry.size) != NULL)
 	{
 		// Add new entry
-		aesd_circular_buffer_add_entry(&pDev->cb, &pDev->entry);
+		pFree_entry = aesd_circular_buffer_add_entry(&pDev->cb, &pDev->entry);
+
+		// Free memory returned
+		if (pFree_entry != NULL)
+			kfree(pFree_entry);
 
 		// Reset size and buffer pointer
 		pDev->entry.size = 0;
