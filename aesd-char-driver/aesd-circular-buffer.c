@@ -72,6 +72,8 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 */
 void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
+    const char *pBuf;
+    
     // Verify arguments
     if ((buffer == NULL) || (add_entry == NULL) || (add_entry->buffptr == NULL) || (add_entry->size == 0))
         return;
@@ -79,6 +81,16 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
     // Check if buffer is already full
     if (buffer->full)
     {
+        // Save memory address pointed to by the out offset
+        pBuf = buffer->entry[buffer->out_offs].buffptr;
+// Free memory
+#ifdef __KERNEL__
+        // Kernel space
+        kfree(pBuf);
+#else
+        // User space
+        free(pBuf);
+#endif
         if ((++buffer->out_offs) >= AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
             buffer->out_offs = 0;
     }

@@ -17,7 +17,12 @@
 #include <linux/types.h>
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
+#include <linux/mutex.h>
+#include <linux/slab.h>
+#include <asm/uaccess.h>
 #include "aesdchar.h"
+#include "aesd-circular-buffer.h"
+
 int aesd_major = 0; // use dynamic major
 int aesd_minor = 0;
 
@@ -99,10 +104,70 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 						 loff_t *f_pos)
 {
 	ssize_t retval = -ENOMEM;
+	struct aesd_dev *pDev = (struct aesd_dev *)filp->private_data; // Get access to device driver
+	ssize_t nWrite;
+
 	PDEBUG("write %zu bytes with offset %lld", count, *f_pos);
-	/**
-	 * TODO: handle write
-	 */
+	
+	// Acquire device mutex
+	retval = mutex_lock_interruptible(&pDev->drv_mutex);
+	if (retval < 0)
+	{
+		PDEBUG("Failed to acquire lock");
+		return retval;
+	}
+
+	// Check the current size of memory and allocate/reallocate as necessary
+	if(pDev->entry.size == 0)
+	{
+		// Allocate memory
+		pDev->entry.buffptr = kzalloc((sizeof(char) * count), GFP_KERNEL);
+
+		// Check for allocation fail
+		if (pDev->entry.buffptr == 0)
+		{
+			// Failled to allocate memory
+			retval = -ENOMEM;
+			goto done;
+		}
+	}
+	else
+	{
+		// Re-allocate memory
+		pDev->entry.buffptr = krealloc(pDev->entry.buffptr, (pDev->entry.size + count), GFP_KERNEL);
+
+		// Check for re-allocation fail
+		if (pDev->entry.buffptr == 0)
+		{
+			goto done;
+		}
+	}
+
+	// Copy from user space to kernel space
+	nWrite = copy_from_user((void *)(&pDev->entry.buffptr[pDev->entry.size]), buf, count);
+
+	// Calculate the number of bytes of byte remaining to write
+	retval = count - nWrite;
+
+	// Update entry size
+	pDev->entry.size = retval;
+
+	// Check for termination
+	if (memchr(pDev->entry.buffptr, '\n', pDev->entry.size) != NULL)
+	{
+		// Add new entry
+		aesd_circular_buffer_add_entry(&pDev->cb, &pDev->entry);
+
+		// Reset size and buffer pointer
+		pDev->entry.size = 0;
+		pDev->entry.buffptr = 0;
+	}
+
+	// Reset position
+	*f_pos = 0;
+
+done:
+	mutex_unlock(&pDev->drv_mutex);
 	return retval;
 }
 struct file_operations aesd_fops = {
