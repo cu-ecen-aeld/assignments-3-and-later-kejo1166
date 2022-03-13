@@ -273,6 +273,7 @@ int main(int argc, char **argv)
         cleanup();
         return -1;
     }
+    close(filefd); // Close file
 
     // Create timer thread
     //setup_timer(&filefd, &timerId);
@@ -383,7 +384,7 @@ int main(int argc, char **argv)
     }
 
     // Remove storage file
-    close(filefd);
+    // close(filefd);
 #ifndef USE_AESD_CHAR_DEVICE
     log_message(LOG_INFO, "Removing \"%s\"\n", STORAGE_DATA_PATH);
     unlink(STORAGE_DATA_PATH);
@@ -445,6 +446,7 @@ void *handle_socket_comms(void *pThreadParams)
     char *pBuf;
     int streamPos = 0;
     THREAD_PARAMS_T *pTP = (THREAD_PARAMS_T *)pThreadParams;
+    int fd = -1;
 
     pTP->threadStatus = SCKT_THREAD_RUNNING;
     pBuf = (char *)malloc(sizeof(char) * BUFFER_SIZE);
@@ -495,31 +497,29 @@ void *handle_socket_comms(void *pThreadParams)
     if (!write_lock())
         goto on_error;
 
+    fd = open(STORAGE_DATA_PATH, O_RDWR | O_CREAT | O_APPEND, 0644);
+    if (fd == -1)
+    {
+        log_message(LOG_ERR, "Thread %d -- could not open file '%s'\n", STORAGE_DATA_PATH);
+        goto on_error;
+    }
+
     // Save data received from client
-    nWrite = write(pTP->fd, pBuf, streamPos);
+    nWrite = write(fd, pBuf, streamPos);
     if (nWrite == -1)
     {
         log_message(LOG_ERR, "Thread %d -- Error: writing to file\n", pTP->threadId);
         goto on_error;
     }
 
-    lseek(pTP->fd, 0, SEEK_SET); // go to begining of file
-
-    if (!write_unlock())
-        goto on_error;
+    lseek(fd, 0, SEEK_SET); // go to begining of file
 
     // Write data to socket
     int rdPos = 0;
     while (1)
     {
 
-        if (!write_lock())
-            goto on_error;
-
-        nRead = read(pTP->fd, buf, BUFFER_SIZE); // read_file(buf, rdPos, sizeof(buf));
-
-        if (!write_unlock())
-            goto on_error;
+        nRead = read(fd, buf, BUFFER_SIZE); // read_file(buf, rdPos, sizeof(buf));
 
         if (nRead == 0)
         {
@@ -550,12 +550,17 @@ void *handle_socket_comms(void *pThreadParams)
         }
     }
 
+    close(fd);      // Close file
+    write_unlock(); // Release lock
     // Close connection with client
     free(pBuf); // Done with allocated memory
     pTP->threadStatus = SCKT_THREAD_DONE;
     pthread_exit(NULL);
 
 on_error:
+    if (fd != -1)
+        close(fd);      // Close file
+    write_unlock(); // Release lock
     free(pBuf); // Done with allocated memory
     pTP->threadResult = -1;
     pTP->threadStatus = SCKT_THREAD_DONE;
