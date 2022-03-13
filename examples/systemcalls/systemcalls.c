@@ -1,4 +1,22 @@
+/**
+ * @file systemcalls.c
+ * @author Kenneth A. Jones
+ * @date 2022-01-21
+ * 
+ * @brief Code for assignment 3 part 1.
+ * 
+ * @copyright Copyright (c) 2022
+ * 
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+
 #include "systemcalls.h"
+#include <syslog.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 /**
  * @param cmd the command to execute with system()
@@ -9,15 +27,31 @@
 */
 bool do_system(const char *cmd)
 {
+   // Create syslog for logging
+   openlog(NULL, 0, LOG_USER);
 
-/*
- * TODO  add your code here
- *  Call the system() function with the command set in the cmd
- *   and return a boolean true if the system() call completed with success 
- *   or false() if it returned a failure
-*/
+   int rtnVal = system(cmd);
 
-    return true;
+   // Reference https://man7.org/linux/man-pages/man3/system.3.html for return values
+   if ((NULL == cmd) && (0 == rtnVal))
+   {
+      syslog(LOG_ERR, "No shell is available");
+      return false;
+   }
+
+   if (-1 == rtnVal)
+   {
+      syslog(LOG_ERR, "Child process could not be created");
+      return false;
+   }
+
+   if (rtnVal > 0)
+   {
+      syslog(LOG_ERR, "Shell could not be executed in the child process");
+      return false;
+   }
+
+   return true;
 }
 
 /**
@@ -36,32 +70,71 @@ bool do_system(const char *cmd)
 
 bool do_exec(int count, ...)
 {
-    va_list args;
-    va_start(args, count);
-    char * command[count+1];
-    int i;
-    for(i=0; i<count; i++)
-    {
-        command[i] = va_arg(args, char *);
-    }
-    command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
+   va_list args;
+   va_start(args, count);
+   char *command[count + 1];
+   int i;
+   for (i = 0; i < count; i++)
+   {
+      command[i] = va_arg(args, char *);
+   }
+   command[count] = NULL;
 
-/*
- * TODO:
- *   Execute a system command by calling fork, execv(),
- *   and wait instead of system (see LSP page 161).
- *   Use the command[0] as the full path to the command to execute
- *   (first argument to execv), and use the remaining arguments
- *   as second argument to the execv() command.
- *   
-*/
+   va_end(args);
 
-    va_end(args);
+   // Create syslog for logging
+   openlog(NULL, 0, LOG_USER);
 
-    return true;
+   // Create child process
+   pid_t pid;
+   int status;
+   int rtnVal;
+   bool exitVal = true;
+
+   // Create child process
+   pid = fork();
+
+   if (-1 == pid)
+   {
+      syslog(LOG_ERR, "No child process is created");
+      exitVal = false;
+   }
+   else if (0 == pid)
+   {
+      // Return in the child process.
+      rtnVal = execv(command[0], command); // Note execv functions return only if an error has occurred
+      syslog(LOG_ERR, "Error running child processes");
+      exit(EXIT_FAILURE); // exit child process
+   }
+   else
+   {
+      // Returned in the parent process, need to wait for child process to finish
+      rtnVal = waitpid(pid, &status, 0);
+
+      if (-1 == rtnVal)
+      {
+         syslog(LOG_ERR, "Child process failed");
+         exitVal = false;
+      }
+
+      // Check if the child process exited normally
+      if (!WIFEXITED(status))
+      {
+         syslog(LOG_ERR, "Child process exit it with issues, exit status=%d ", WEXITSTATUS(status));
+         exitVal = false;
+      }
+      else
+      {
+         if (WEXITSTATUS(status))
+         {
+            // child process exit with nonzero return
+            syslog(LOG_INFO, "child process WEXITSTATUS %d", WEXITSTATUS(status));
+            exitVal = false;
+         }
+      }
+   }
+
+   return exitVal;
 }
 
 /**
@@ -71,29 +144,89 @@ bool do_exec(int count, ...)
 */
 bool do_exec_redirect(const char *outputfile, int count, ...)
 {
-    va_list args;
-    va_start(args, count);
-    char * command[count+1];
-    int i;
-    for(i=0; i<count; i++)
-    {
-        command[i] = va_arg(args, char *);
-    }
-    command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
+   va_list args;
+   va_start(args, count);
+   char *command[count + 1];
+   int i;
+   for (i = 0; i < count; i++)
+   {
+      command[i] = va_arg(args, char *);
+   }
+   command[count] = NULL;
 
+   va_end(args);
 
-/*
- * TODO
- *   Call execv, but first using https://stackoverflow.com/a/13784315/1446624 as a refernce,
- *   redirect standard out to a file specified by outputfile.
- *   The rest of the behaviour is same as do_exec()
- *   
-*/
+   /*
+    *
+    *   Call execv, but first using https://stackoverflow.com/a/13784315/1446624 as a refernce,
+    *   redirect standard out to a file specified by outputfile.
+    *   The rest of the behaviour is same as do_exec()
+    *
+    */
 
-    va_end(args);
-    
-    return true;
+   // Create syslog for logging
+   openlog(NULL, 0, LOG_USER);
+
+   // Create child process
+   pid_t pid;
+   int status;
+   int rtnVal;
+   bool exitVal = true;
+   int fd = open(outputfile, O_WRONLY | O_CREAT);
+
+   if (fd < 0)
+   {
+      syslog(LOG_ERR, "Failed to open");
+      exitVal = false;
+   }
+
+   // Create child process
+   pid = fork();
+
+   if (-1 == pid)
+   {
+      syslog(LOG_ERR, "No child process is created");
+      exitVal = false;
+   }
+   else if (0 == pid)
+   {
+      // Return in the child process.
+      if (dup2(fd, 1) < 0)
+      {
+         syslog(LOG_ERR, "Failed dup2");
+      }
+      close(fd);
+      rtnVal = execv(command[0], command); // Note execv functions return only if an error has occurred
+      syslog(LOG_ERR, "Error running child processes");
+      exit(EXIT_FAILURE); // exit child process
+   }
+   else
+   {
+      // Returned in the parent process, need to wait for child process to finish
+      rtnVal = waitpid(pid, &status, 0);
+
+      if (-1 == rtnVal)
+      {
+         syslog(LOG_ERR, "Child process failed");
+         exitVal = false;
+      }
+
+      // Check if the child process exited normally
+      if (!WIFEXITED(status))
+      {
+         syslog(LOG_ERR, "Child process exit it with issues, exit status=%d ", WEXITSTATUS(status));
+         exitVal = false;
+      }
+      else
+      {
+         if (WEXITSTATUS(status))
+         {
+            // child process exit with nonzero return
+            syslog(LOG_INFO, "child process WEXITSTATUS %d", WEXITSTATUS(status));
+            exitVal = false;
+         }
+      }
+   }
+
+   return exitVal;
 }
