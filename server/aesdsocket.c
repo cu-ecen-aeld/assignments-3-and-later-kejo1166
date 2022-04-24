@@ -58,7 +58,12 @@
 #define MAX_CONNECTIONS 50
 
 // Socket data storage
-#define STORAGE_DATA_PATH "/var/tmp/aesdsocketdata"
+#define USE_AESD_CHAR_DEVICE 1
+#ifdef USE_AESD_CHAR_DEVICE
+    #define STORAGE_DATA_PATH "/dev/aesdchar"
+#else
+    #define STORAGE_DATA_PATH "/var/tmp/aesdsocketdata"
+#endif
 
 // ============================================================================
 // PRIVATE TYPEDEFS
@@ -268,6 +273,7 @@ int main(int argc, char **argv)
         cleanup();
         return -1;
     }
+    close(filefd); // Close file
 
     // Create timer thread
     //setup_timer(&filefd, &timerId);
@@ -378,9 +384,11 @@ int main(int argc, char **argv)
     }
 
     // Remove storage file
-    close(filefd);
+    // close(filefd);
+#ifndef USE_AESD_CHAR_DEVICE
     log_message(LOG_INFO, "Removing \"%s\"\n", STORAGE_DATA_PATH);
     unlink(STORAGE_DATA_PATH);
+#endif
 
     cleanup();
     return 0;
@@ -438,6 +446,7 @@ void *handle_socket_comms(void *pThreadParams)
     char *pBuf;
     int streamPos = 0;
     THREAD_PARAMS_T *pTP = (THREAD_PARAMS_T *)pThreadParams;
+    int fd = -1;
 
     pTP->threadStatus = SCKT_THREAD_RUNNING;
     pBuf = (char *)malloc(sizeof(char) * BUFFER_SIZE);
@@ -488,31 +497,29 @@ void *handle_socket_comms(void *pThreadParams)
     if (!write_lock())
         goto on_error;
 
+    fd = open(STORAGE_DATA_PATH, O_RDWR | O_CREAT | O_APPEND, 0644);
+    if (fd == -1)
+    {
+        log_message(LOG_ERR, "Thread %d -- could not open file '%s'\n", STORAGE_DATA_PATH);
+        goto on_error;
+    }
+
     // Save data received from client
-    nWrite = write(pTP->fd, pBuf, streamPos);
+    nWrite = write(fd, pBuf, streamPos);
     if (nWrite == -1)
     {
         log_message(LOG_ERR, "Thread %d -- Error: writing to file\n", pTP->threadId);
         goto on_error;
     }
 
-    lseek(pTP->fd, 0, SEEK_SET); // go to begining of file
-
-    if (!write_unlock())
-        goto on_error;
+    lseek(fd, 0, SEEK_SET); // go to begining of file
 
     // Write data to socket
     int rdPos = 0;
     while (1)
     {
 
-        if (!write_lock())
-            goto on_error;
-
-        nRead = read(pTP->fd, buf, BUFFER_SIZE); // read_file(buf, rdPos, sizeof(buf));
-
-        if (!write_unlock())
-            goto on_error;
+        nRead = read(fd, buf, BUFFER_SIZE); // read_file(buf, rdPos, sizeof(buf));
 
         if (nRead == 0)
         {
@@ -543,12 +550,17 @@ void *handle_socket_comms(void *pThreadParams)
         }
     }
 
+    close(fd);      // Close file
+    write_unlock(); // Release lock
     // Close connection with client
     free(pBuf); // Done with allocated memory
     pTP->threadStatus = SCKT_THREAD_DONE;
     pthread_exit(NULL);
 
 on_error:
+    if (fd != -1)
+        close(fd);      // Close file
+    write_unlock(); // Release lock
     free(pBuf); // Done with allocated memory
     pTP->threadResult = -1;
     pTP->threadStatus = SCKT_THREAD_DONE;
@@ -557,10 +569,6 @@ on_error:
 
 void *handle_timer(void *args)
 {
-    int *filefd = (int *)args;
-    size_t len;
-    time_t ts;
-    struct tm *localTime;
     struct timespec currTime = {0, 0};
     int count = TIMER_INTERVAL_SEC;
 
@@ -575,18 +583,6 @@ void *handle_timer(void *args)
 
         if ((--count) <= 0)
         {
-            char buf[100] = {0};
-            time(&ts);                  // Get the timestamp
-            localTime = localtime(&ts); // Convert to local time
-            len = strftime(buf, 100, "timestamp:%a, %d %b %Y %T %z\n", localTime);
-
-            log_message(LOG_DEBUG, "%s", buf);
-
-            // Write timestamp to file
-            write_lock();
-            if (write(*filefd, buf, len) < 0)
-                log_message(LOG_ERR, "Error: could not write timestamp to file\n");
-            write_unlock();
             count = TIMER_INTERVAL_SEC;
         }
 
